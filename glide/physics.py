@@ -46,7 +46,10 @@ class IcePhysics:
     >>> u, v, H = physics.forward(dt=10.0, n_vcycles=3)
     """
 
-    def __init__(self, ny, nx, dx, n_levels=5, n=3.0, eps_reg=1e-5, thklim=0.1, water_drag=1e-3,calving_rate=1.0,gl_sigmoid_c=0.1,gl_derivatives=False):
+    def __init__(self, ny, nx, dx, n_levels=5, 
+            n=3.0, eps_reg=1e-5, 
+            thklim=0.1, 
+            water_drag=1e-3,calving_rate=1.0,sigmoid_c=0.1):
         self.ny = ny
         self.nx = nx
         self.dx = dx
@@ -56,8 +59,7 @@ class IcePhysics:
         self.thklim = cp.float32(thklim)
         self.water_drag = cp.float32(water_drag)
         self.calving_rate = cp.float32(calving_rate)
-        self.gl_sigmoid_c=cp.float32(gl_sigmoid_c)
-        self.gl_derivatives=gl_derivatives
+        self.sigmoid_c=cp.float32(sigmoid_c)
 
         # Load kernels
         self.kernels = get_kernels()
@@ -72,8 +74,7 @@ class IcePhysics:
             kernels=self.kernels,
             n=self.n, eps_reg=self.eps_reg,
             water_drag=self.water_drag,calving_rate=self.calving_rate,
-            gl_sigmoid_c=self.gl_sigmoid_c,gl_derivatives=self.gl_derivatives
-        )
+            sigmoid_c=self.sigmoid_c)
         self.grids = [self.grid]
 
         for _ in range(self.n_levels - 1):
@@ -174,33 +175,33 @@ class IcePhysics:
 
         # Compute initial residual for convergence tracking
         if verbose:
-            rss_H_init = self.grid.compute_residual(return_fischer_burmeister=True)
+            self.grid.compute_residual()
             r0 = float(cp.sqrt(
                 cp.linalg.norm(self.grid.r_u)**2 +
                 cp.linalg.norm(self.grid.r_v)**2 +
-                cp.linalg.norm(rss_H_init)**2
+                cp.linalg.norm(self.grid.r_H)**2
             ))
             print(f"  Initial: |r| = {r0:.2e}, "
                   f"|r_u| = {float(cp.linalg.norm(self.grid.r_u)):.2e}, "
                   f"|r_v| = {float(cp.linalg.norm(self.grid.r_v)):.2e}, "
-                  f"|rss_H| = {float(cp.linalg.norm(rss_H_init)):.2e}")
+                  f"|r_H| = {float(cp.linalg.norm(self.grid.r_H)):.2e}")
 
         # Solve
         for i in range(n_vcycles):
             fascd_vcycle(self.grid, self.thklim, finest=True)
 
             if verbose:
-                rss_H = self.grid.compute_residual(return_fischer_burmeister=True)
+                self.grid.compute_residual()
                 r_combined = float(cp.sqrt(
                     cp.linalg.norm(self.grid.r_u)**2 +
                     cp.linalg.norm(self.grid.r_v)**2 +
-                    cp.linalg.norm(rss_H)**2
+                    cp.linalg.norm(self.grid.r_H)**2
                 ))
                 rel = r_combined / r0 if r0 > 0 else 0.0
                 print(f"  V-cycle {i}: |r|/|r0| = {rel:.2e}, "
                       f"|r_u| = {float(cp.linalg.norm(self.grid.r_u)):.2e}, "
                       f"|r_v| = {float(cp.linalg.norm(self.grid.r_v)):.2e}, "
-                      f"|rss_H| = {float(cp.linalg.norm(rss_H)):.2e}")
+                      f"|r_H| = {float(cp.linalg.norm(self.grid.r_H)):.2e}")
 
         # Update H_prev for next time step
         if update_geometry:

@@ -42,7 +42,7 @@ class Grid:
 
     def __init__(self, ny, nx, dx, dt, kernels, parent=None,
                  n=3.0, eps_reg=1e-5, water_drag=0.001, calving_rate=1.0,
-                 gl_sigmoid_c=0.1,gl_derivatives=False):
+                 sigmoid_c=0.1):
 
         self.parent = parent
         self.child = None
@@ -61,17 +61,11 @@ class Grid:
         self.n_total = self.nu + self.nv + self.nh
 
         # Physics parameters (passed to CUDA kernels as struct)
-        self._n = float(n)
-        self._eps_reg = float(eps_reg)
-        self._water_drag = float(water_drag)
-        self._calving_rate = float(calving_rate)
-        self._gl_sigmoid_c = float(gl_sigmoid_c)
-        self._gl_derivatives = gl_derivatives
-        self.physics_params = make_physics_params(
-            n=self._n, eps_reg=self._eps_reg,
-            water_drag=self._water_drag, calving_rate=self._calving_rate,
-            gl_sigmoid_c=self._gl_sigmoid_c, gl_derivatives=self._gl_derivatives
-        )
+        self._n = cp.float32(n)
+        self._eps_reg = cp.float32(eps_reg)
+        self._water_drag = cp.float32(water_drag)
+        self._calving_rate = cp.float32(calving_rate)
+        self._sigmoid_c = cp.float32(sigmoid_c)
 
         # Allocate state and work arrays
         self._allocate_arrays()
@@ -187,38 +181,47 @@ class Grid:
         grid_size = (self.nx // stride + 1, self.ny // stride + 1)
         return grid_size, block_size, stride, halo
 
-    def compute_residual(self, return_fischer_burmeister=False):
+    def compute_residual(self, use_mask=True):
         """Compute residual r = f - F(U)."""
         kernel = self.kernels.ice.get_function('compute_residual')
         grid_size, block_size, stride, halo = self._kernel_config()
+
+        if use_mask:
+            mask = self.mask
+        else:
+            mask = self.Z_H         
 
         kernel(grid_size, block_size,
                (self.r_u, self.r_v, self.r_H,
                 self.u, self.v, self.H,
                 self.f_u, self.f_v, self.f_H,
                 self.bed, self.B, self.beta,
-                self.mask, self.gamma,
-                self.physics_params,
+                mask, self.gamma,
+                self._n, self._eps_reg, self._water_drag,
+                self._calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
 
-        if return_fischer_burmeister:
-            a = self.r_H
-            b = self.H - self.gamma
-            return a + b - cp.sqrt(a**2 + b**2)
 
-    def compute_F(self):
+
+    def compute_F(self, use_mask=True):
         """Compute F(U) (operator evaluation without RHS)."""
         kernel = self.kernels.ice.get_function('compute_residual')
         grid_size, block_size, stride, halo = self._kernel_config()
+
+        if use_mask:
+            mask = self.mask
+        else:
+            mask = self.Z_H   
 
         kernel(grid_size, block_size,
                (self.F_u, self.F_v, self.F_H,
                 self.u, self.v, self.H,
                 self.Z_u, self.Z_v, self.Z_H,
                 self.bed, self.B, self.beta,
-                self.mask, self.gamma,
-                self.physics_params,
+                mask, self.gamma,
+                self._n, self._eps_reg, self._water_drag,
+                self._calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
 
@@ -253,7 +256,7 @@ class Grid:
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
 
-    def vanka_smooth(self, color, omega=cp.float32(0.5), n_inner=1):
+    def vanka_smooth(self, n_inner=1):
         """Apply one Vanka smoother pass (red-black)."""
         kernel = self.kernels.ice.get_function('vanka_smooth')
         grid_size, block_size, stride, halo = self._kernel_config()
@@ -263,25 +266,12 @@ class Grid:
                 self.u, self.v, self.H,
                 self.f_u, self.f_v, self.f_H,
                 self.bed, self.B, self.beta, self.gamma,
-                self.physics_params,
+                self._n, self._eps_reg, self._water_drag,
+                self._calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo,
-                color, n_inner, omega))
+                n_inner))
 
-    def vanka_smooth_local(self, color, omega=cp.float32(0.5), n_inner=1):
-        """Apply Vanka smoother only where error_mask is set."""
-        kernel = self.kernels.ice.get_function('vanka_smooth_local')
-        grid_size, block_size, stride, halo = self._kernel_config()
-
-        kernel(grid_size, block_size,
-               (self.delta_u, self.delta_v, self.delta_H, self.error_mask,
-                self.u, self.v, self.H,
-                self.f_u, self.f_v, self.f_H,
-                self.bed, self.B, self.beta, self.gamma,
-                self.physics_params,
-                self.dx, self.dt,
-                self.ny, self.nx, stride, halo,
-                color, n_inner, omega))
 
     def vanka_smooth_adjoint(self, color, omega=cp.float32(0.5)):
         """Apply adjoint Vanka smoother pass."""
@@ -302,18 +292,11 @@ class Grid:
                 color, omega))
         self.Lambda[:] = self.Lambda_out[:]
 
-    def vanka_sweep(self, n_iter, n_inner=10, omega=cp.float32(0.5)):
+    def vanka_sweep(self, n_iter, verbose=False,n_inner=30, omega=cp.float32(0.5)):
         """Perform n_iter red-black Vanka smoothing sweeps."""
         for _ in range(n_iter):
             self.delta_U.fill(0.0)
-            self.vanka_smooth(0, omega=cp.float32(1.0), n_inner=n_inner)
-            self.U[:] += omega * self.delta_U
-
-    def vanka_sweep_local(self, n_iter, n_inner=10, omega=cp.float32(0.5)):
-        """Perform local Vanka sweeps only where error_mask is set."""
-        for _ in range(n_iter):
-            self.delta_U.fill(0.0)
-            self.vanka_smooth_local(0, omega=cp.float32(1.0), n_inner=n_inner)
+            self.vanka_smooth(n_inner=n_inner)
             self.U[:] += omega * self.delta_U
 
     def vanka_sweep_adjoint(self, n_iter, omega=cp.float32(0.5)):
@@ -328,10 +311,6 @@ class Grid:
             self.compute_vjp()
             self.r_adj[:] -= self.l
             self.vanka_smooth_adjoint(1, omega=omega)
-
-    def compute_mask(self, tol=1e-1):
-        """Compute active set mask for thickness constraints."""
-        self.mask[:, :] = (self.H <= (self.gamma + tol)).astype(cp.float32)
 
     def compute_grad_beta(self):
         """Compute gradient of objective w.r.t. beta via adjoint."""

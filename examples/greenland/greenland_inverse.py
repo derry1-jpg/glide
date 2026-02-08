@@ -121,6 +121,31 @@ physics.set_parameters(B=B, beta=0.01, smb=smb)
 
 grid = physics.grid
 
+# Reset state
+grid.u.fill(0.0)
+grid.v.fill(0.0)
+grid.H[:] = grid.H_prev
+
+# Forward solve
+restrict_parameters_to_hierarchy(grid)
+#grid.f_H[:,:] = grid.H_prev/grid.dt + grid.smb
+#for _ in range(5):
+#    fascd_vcycle(grid, physics.thklim, finest=True)
+
+physics.forward(dt=1.0,n_vcycles=5,verbose=False,update_geometry=False)
+
+# Compute loss
+J = abs_loss(grid.u, grid.v, u_obs, v_obs)
+dJdu, dJdv = abs_grad(grid.u, grid.v, u_obs, v_obs)
+
+# Adjoint solve
+grid.f_adj_u[:] = -dJdu
+grid.f_adj_v[:] = -dJdv
+grid.f_adj_H.fill(0.0)
+grid.Lambda.fill(0.0)
+
+adjoint_vcycle(grid)
+"""
 # =============================================================================
 # Build observation hierarchy for multi-resolution optimization
 # =============================================================================
@@ -145,7 +170,8 @@ while g.child is not None:
 # Multi-resolution optimization
 # =============================================================================
 
-for level_idx in range(len(level_grids) - 1, -1, -1):
+#for level_idx in range(len(level_grids) - 1, -1, -1):
+for level_idx in range(1):#len(level_grids) - 1, -1, -1):
     current_grid = level_grids[level_idx]
     u_obs_level, v_obs_level = obs_hierarchy[level_idx]
 
@@ -174,7 +200,6 @@ for level_idx in range(len(level_grids) - 1, -1, -1):
     grad_pinned = allocate_pinned(n_params, dtype=np.float64)
 
     def objective(log_beta_flat):
-        """Objective function for L-BFGS-B."""
         # Transfer from (pinned) CPU to GPU
         log_beta = cp.asarray(log_beta_flat.reshape((current_grid.ny, current_grid.nx)), dtype=cp.float32)
         current_grid.beta[:] = cp.exp(log_beta)
@@ -221,7 +246,6 @@ for level_idx in range(len(level_grids) - 1, -1, -1):
         return float(total_loss), grad_pinned
 
     def callback(log_beta_flat):
-        """Callback for visualization."""
         log_beta = cp.asarray(log_beta_flat.reshape((current_grid.ny, current_grid.nx)), dtype=cp.float32)
         counter[0] += 1
 
@@ -242,7 +266,7 @@ for level_idx in range(len(level_grids) - 1, -1, -1):
         objective, x_pinned,
         bounds=bounds,
         callback=callback,
-        factr=1e11,
+        factr=1e12,
         m=15
     )
 
@@ -263,3 +287,4 @@ for level_idx in range(len(level_grids) - 1, -1, -1):
 
 print("\nOptimization complete!")
 print(f"Results saved to {OUTPUT_DIR}/")
+"""

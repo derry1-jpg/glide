@@ -29,7 +29,7 @@ SKIP = 4           # Geometry downsampling factor
 DT = 10.0          # Time step (years)
 N_STEPS = 20      # Number of time steps
 N_LEVELS = 5       # Multigrid levels
-N_VCYCLES = 3      # V-cycles per time step
+N_VCYCLES = 10      # V-cycles per time step
 
 # Physical constants
 RHO_ICE = 917.0

@@ -20,6 +20,8 @@ from glide.data import (
     load_greenland_preprocessed
 )
 
+from scipy.ndimage import gaussian_filter
+
 # =============================================================================
 # Configuration - modify these paths and parameters
 # =============================================================================
@@ -28,7 +30,7 @@ OUTPUT_DIR = "./output"
 
 SKIP = 6           # Geometry downsampling factor
 DT = 20.0          # Time step (years)
-N_STEPS = 50      # Number of time steps
+N_STEPS = 10      # Number of time steps
 N_LEVELS = 5       # Multigrid levels
 N_VCYCLES = 10      # V-cycles per time step
 
@@ -78,9 +80,12 @@ dataset = load_greenland_preprocessed()
 ny,nx = dataset.ny,dataset.nx
 dx = dataset.dx
 bed = dataset.bed.values
+bed = gaussian_filter(bed,1)
 surface = dataset.surface.values
 thickness = dataset.thickness.values
+thickness = gaussian_filter(thickness,1)
 beta = dataset.beta.values
+beta.fill(2.5)
 smb = dataset.smb.values
 smb -= 2
 # =============================================================================
@@ -95,9 +100,10 @@ B = B_scalar * cp.ones((ny, nx), dtype=cp.float32)
 print("Initializing physics...")
 physics = IcePhysics(ny, nx, dx, n_levels=N_LEVELS, 
         thklim=0.1,
-        n=3.0,eps_reg=1e-6,
-        water_drag=1e-6,
-        calving_rate=1.0,sigmoid_c=0.1)
+        n=3.0,eps_reg=1e-5,
+        m=1./3.,u_reg=1.0,
+        water_drag=1e-5,
+        calving_rate=2.0,sigmoid_c=0.1)
 physics.set_geometry(bed, thickness)
 physics.set_parameters(B=B, beta=beta, smb=smb)
 
@@ -137,4 +143,5 @@ for step in range(N_STEPS):
     writer.write_pvd()
 
 print("Done!")
+
 

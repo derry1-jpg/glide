@@ -41,7 +41,9 @@ class Grid:
     """
 
     def __init__(self, ny, nx, dx, dt, kernels, parent=None,
-                 n=3.0, eps_reg=1e-5, water_drag=0.001, calving_rate=1.0,
+                 n=3.0, eps_reg=1e-5, 
+                 m=1.0, u_reg=1.0,
+                 water_drag=0.001, calving_rate=1.0,
                  sigmoid_c=0.1):
 
         self.parent = parent
@@ -63,6 +65,8 @@ class Grid:
         # Physics parameters (passed to CUDA kernels as struct)
         self._n = cp.float32(n)
         self._eps_reg = cp.float32(eps_reg)
+        self._m = cp.float32(m)
+        self._u_reg = cp.float32(u_reg)
         self._water_drag = cp.float32(water_drag)
         self._calving_rate = cp.float32(calving_rate)
         self._sigmoid_c = cp.float32(sigmoid_c)
@@ -167,8 +171,11 @@ class Grid:
             parent=self,
             n=self._n,
             eps_reg=self._eps_reg,
+            m=self._m,
+            u_reg=self._u_reg,
             water_drag=self._water_drag,
-            calving_rate=self._calving_rate
+            calving_rate=self._calving_rate,
+            sigmoid_c=self._sigmoid_c
         )
         self.child = child
         return child
@@ -197,7 +204,9 @@ class Grid:
                 self.f_u, self.f_v, self.f_H,
                 self.bed, self.B, self.beta,
                 mask, self.gamma,
-                self._n, self._eps_reg, self._water_drag,
+                self._n, self._eps_reg, 
+                self._m, self._u_reg,
+                self._water_drag,
                 self._calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
@@ -220,7 +229,9 @@ class Grid:
                 self.Z_u, self.Z_v, self.Z_H,
                 self.bed, self.B, self.beta,
                 mask, self.gamma,
-                self._n, self._eps_reg, self._water_drag,
+                self._n, self._eps_reg, 
+                self._m, self._u_reg,
+                self._water_drag,
                 self._calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
@@ -266,7 +277,9 @@ class Grid:
                 self.u, self.v, self.H,
                 self.f_u, self.f_v, self.f_H,
                 self.bed, self.B, self.beta, self.gamma,
-                self._n, self._eps_reg, self._water_drag,
+                self._n, self._eps_reg, 
+                self._m, self._u_reg,
+                self._water_drag,
                 self._calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo,
@@ -298,6 +311,11 @@ class Grid:
             self.delta_U.fill(0.0)
             self.vanka_smooth(n_inner=n_inner)
             self.U[:] += omega * self.delta_U
+            if verbose:
+                self.compute_residual(use_mask=True)
+                print(cp.linalg.norm(self.r_u),
+                      cp.linalg.norm(self.r_v),
+                      cp.linalg.norm(self.r_H))
 
     def vanka_sweep_adjoint(self, n_iter, omega=cp.float32(0.5)):
         """Perform n_iter adjoint Vanka smoothing sweeps."""

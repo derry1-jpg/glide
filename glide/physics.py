@@ -47,7 +47,8 @@ class IcePhysics:
     """
 
     def __init__(self, ny, nx, dx, n_levels=5, 
-            n=3.0, eps_reg=1e-5, 
+            n=3.0, eps_reg=1e-5,
+            m=1.0, u_reg=1.0,
             thklim=0.1, 
             water_drag=1e-3,calving_rate=1.0,sigmoid_c=0.1):
         self.ny = ny
@@ -56,6 +57,8 @@ class IcePhysics:
         self.n_levels = n_levels
         self.n = cp.float32(n)
         self.eps_reg = cp.float32(eps_reg)
+        self.m = cp.float32(m)
+        self.u_reg = cp.float32(u_reg)
         self.thklim = cp.float32(thklim)
         self.water_drag = cp.float32(water_drag)
         self.calving_rate = cp.float32(calving_rate)
@@ -73,6 +76,7 @@ class IcePhysics:
             self.ny, self.nx, self.dx, dt=1.0,
             kernels=self.kernels,
             n=self.n, eps_reg=self.eps_reg,
+            m=self.m, u_reg=self.u_reg,
             water_drag=self.water_drag,calving_rate=self.calving_rate,
             sigmoid_c=self.sigmoid_c)
         self.grids = [self.grid]

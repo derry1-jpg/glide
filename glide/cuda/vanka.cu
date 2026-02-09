@@ -16,8 +16,9 @@ void vanka_smooth(
     const float* __restrict__ B,
     const float* __restrict__ beta,
     const float* __restrict__ gamma,
-    float n, float eps_reg, float water_drag,
-    float calving_rate, float sigmoid_c,
+    float n, float eps_reg, 
+    float m, float u_reg,
+    float water_drag, float calving_rate, float sigmoid_c,
     float dx, float dt,
     int ny, int nx, int stride, int halo,
     int n_newton
@@ -312,53 +313,73 @@ void vanka_smooth(
 	    
 	    // Basal shear stress for left momentum
             {
+            float v_tl   = get_hfacet(v,i,j-1,ny,nx);
+	    float v_bl   = get_hfacet(v,i+1,j-1,ny,nx);
+
 	    float H_l    = get_cell(H,i,j-1,ny,nx);
 	    float bed_l  = get_cell(bed,i,j-1,ny,nx);
 	    float bed_c  = get_cell(bed,i,j,ny,nx);
 	    float beta_l = get_cell(beta,i,j-1,ny,nx);
 	    float beta_c = get_cell(beta,i,j,ny,nx);
-	    TauBxJacobian tau_bx_l = get_tau_bx_jac({u_l,H_l,H_c,bed_l,bed_c,beta_l,beta_c,water_drag,sigmoid_c});
+	    TauBxJacobian tau_bx_l = get_tau_bx_jac({u_l,v_tl,v_t,v_bl,v_b,H_l,H_c,bed_l,bed_c,beta_l,beta_c,m,u_reg,water_drag,sigmoid_c});
 	    r[0] += tau_bx_l.res;
             J[0] += tau_bx_l.d_u;
+	    J[2] += tau_bx_l.d_v_tr;
+	    J[3] += tau_bx_l.d_v_br;
 	    J[4] += tau_bx_l.d_H_r;
 	    }
 
 	    // Basal shear stress for right momentum
             {
+            float v_tr   = get_hfacet(v,i,j+1,ny,nx);
+	    float v_br   = get_hfacet(v,i+1,j+1,ny,nx);
+	    
 	    float H_r    = get_cell(H,i,j+1,ny,nx);
 	    float bed_c  = get_cell(bed,i,j,ny,nx);
 	    float bed_r  = get_cell(bed,i,j+1,ny,nx);
 	    float beta_c = get_cell(beta,i,j,ny,nx);
 	    float beta_r = get_cell(beta,i,j+1,ny,nx);
-	    TauBxJacobian tau_bx_r = get_tau_bx_jac({u_r,H_c,H_r,bed_c,bed_r,beta_c,beta_r,water_drag,sigmoid_c});
+	    TauBxJacobian tau_bx_r = get_tau_bx_jac({u_r,v_t,v_tr,v_b,v_br,H_c,H_r,bed_c,bed_r,beta_c,beta_r,m,u_reg,water_drag,sigmoid_c});
 	    r[1] += tau_bx_r.res;
             J[6] += tau_bx_r.d_u;
+	    J[7] += tau_bx_r.d_v_tl;
+	    J[8] += tau_bx_r.d_v_bl;
 	    J[9] += tau_bx_r.d_H_l;
 	    }
 
 	    // Basal shear stress for top momentum
             {
+            float u_tl = get_vfacet(u,i-1,j,ny,nx);
+	    float u_tr = get_vfacet(u,i-1,j+1,ny,nx);
+
 	    float H_t    = get_cell(H,i-1,j,ny,nx);
 	    float bed_t  = get_cell(bed,i-1,j,ny,nx);
 	    float bed_c  = get_cell(bed,i,j,ny,nx);
 	    float beta_t = get_cell(beta,i-1,j,ny,nx);
 	    float beta_c = get_cell(beta,i,j,ny,nx);
-	    TauByJacobian tau_by_t = get_tau_by_jac({v_t,H_t,H_c,bed_t,bed_c,beta_t,beta_c,water_drag,sigmoid_c});
+	    TauByJacobian tau_by_t = get_tau_by_jac({v_t,u_tl,u_tr,u_l,u_r,H_t,H_c,bed_t,bed_c,beta_t,beta_c,m,u_reg,water_drag,sigmoid_c});
 	    r[2]  += tau_by_t.res;
             J[12] += tau_by_t.d_v;
+	    J[10] += tau_by_t.d_u_bl;
+	    J[11] += tau_by_t.d_u_br;
 	    J[14] += tau_by_t.d_H_b;
 	    }
 
 	    // Basal shear stress for bottom momentum
             {
+            float u_bl = get_vfacet(u,i+1,j,ny,nx);
+            float u_br = get_vfacet(u,i+1,j+1,ny,nx);
+
 	    float H_b    = get_cell(H,i+1,j,ny,nx);
 	    float bed_c  = get_cell(bed,i,j,ny,nx);
 	    float bed_b  = get_cell(bed,i+1,j,ny,nx);
 	    float beta_c = get_cell(beta,i,j,ny,nx);
 	    float beta_b = get_cell(beta,i+1,j,ny,nx);
-	    TauByJacobian tau_by_b = get_tau_by_jac({v_b,H_c,H_b,bed_c,bed_b,beta_c,beta_b,water_drag,sigmoid_c});
+	    TauByJacobian tau_by_b = get_tau_by_jac({v_b,u_l,u_r,u_bl,u_br,H_c,H_b,bed_c,bed_b,beta_c,beta_b,m,u_reg,water_drag,sigmoid_c});
 	    r[3]  += tau_by_b.res;
             J[18] += tau_by_b.d_v;
+	    J[15] += tau_by_b.d_u_tl;
+	    J[16] += tau_by_b.d_u_tr;
 	    J[19] += tau_by_b.d_H_t;
 	    }
             
@@ -425,7 +446,7 @@ void vanka_smooth(
 	    lu_5x5_solve(J,r,delta_x);
 
 
-            float relaxation_factor = 0.25f;
+            float relaxation_factor = 0.5f;
 
 	    float y_u_l = -relaxation_factor*delta_x[0] - c_u_l;
 	    float t_u_l = u_l + y_u_l;
@@ -471,7 +492,7 @@ void vanka_smooth(
 	mask[i * nx + j]              = masked;
     }
 }
-
+/*
 extern "C" __global__
 void vanka_smooth_adjoint(
     float* __restrict__ lambda_u_out,
@@ -871,7 +892,7 @@ void vanka_smooth_adjoint(
 	lambda_H_out[i * nx + j]           = l_H_c +      omega*delta_lambda[4];
     }
 }
-
+*/
 
 /*
 extern "C" __global__

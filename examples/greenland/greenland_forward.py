@@ -30,9 +30,9 @@ OUTPUT_DIR = "./output"
 
 SKIP = 6           # Geometry downsampling factor
 DT = 20.0          # Time step (years)
-N_STEPS = 10      # Number of time steps
+N_STEPS = 50      # Number of time steps
 N_LEVELS = 5       # Multigrid levels
-N_VCYCLES = 10      # V-cycles per time step
+N_VCYCLES = 5      # V-cycles per time step
 
 # Physical constants
 RHO_ICE = 917.0
@@ -87,7 +87,7 @@ thickness = gaussian_filter(thickness,1)
 beta = dataset.beta.values
 beta.fill(2.5)
 smb = dataset.smb.values
-smb -= 2
+#smb -= 2
 # =============================================================================
 # Initialize physics
 # =============================================================================
@@ -103,7 +103,7 @@ physics = IcePhysics(ny, nx, dx, n_levels=N_LEVELS,
         n=3.0,eps_reg=1e-5,
         m=1./3.,u_reg=1.0,
         water_drag=1e-5,
-        calving_rate=2.0,sigmoid_c=0.1)
+        calving_rate=2000.0,sigmoid_c=0.1)
 physics.set_geometry(bed, thickness)
 physics.set_parameters(B=B, beta=beta, smb=smb)
 
@@ -128,7 +128,7 @@ for step in range(N_STEPS):
     print(f"Step {step}: t = {t:.1f} yr, H_mean = {float(grid.H.mean()):.1f} m")
 
     # Forward solve
-    u, v, H = physics.forward(dt=DT, n_vcycles=N_VCYCLES, verbose=True)
+    u, v, H = physics.forward(dt=DT, n_vcycles=N_VCYCLES, verbose=True,update_geometry=True)
     t += DT
 
     # Output

@@ -54,7 +54,6 @@ __device__ void populate_viscosity(
 
     eta_local[bi][bj] = eta;
 
-    __syncthreads();
 
 }
 
@@ -107,7 +106,6 @@ __device__ void populate_viscosity(
 
     eta_local[bi][bj] = 0.5f*get_cell(B,i,j,ny,nx)*__powf(eps_II_c,glen_exp);
 
-    __syncthreads();
 
 }
 

@@ -193,6 +193,7 @@ class IcePhysics:
         # Solve
         for i in range(n_vcycles):
             fascd_vcycle(self.grid, self.thklim, finest=True)
+            #self.grid.vanka_sweep(20,n_inner=30,omega=cp.float32(0.5))
 
             if verbose:
                 self.grid.compute_residual()

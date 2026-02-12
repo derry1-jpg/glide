@@ -40,6 +40,8 @@ void compute_residual(
 
     populate_viscosity(eta_local, bi, bj, i, j, u, v, B, n, eps_reg, dx, ny, nx);
 
+    __syncthreads();
+
     bool is_active = (threadIdx.x >= halo && threadIdx.x < blockDim.x - halo) &&
                      (threadIdx.y >= halo && threadIdx.y < blockDim.y - halo);
 
@@ -53,33 +55,53 @@ void compute_residual(
 
 
 	    float H_c      = get_cell(H,i,j,ny,nx);
+	    float bed_c = get_cell(bed,i,j,ny,nx);
 	    float f_H_c    = get_cell(f_H,i,j,ny,nx);
 
 	    float rH = H_c/dt - f_H_c;
 
-	    float bed_c = get_cell(bed,i,j,ny,nx);
-	    CellCalvingJacobian j_calve = get_cell_calving_jac({H_c,bed_c,calving_rate,sigmoid_c},i, j, ny, nx);
-	    rH -= j_calve.res;
+	    //float bed_c = get_cell(bed,i,j,ny,nx);
+	    //CellCalvingJacobian j_calve = get_cell_calving_jac({H_c,bed_c,calving_rate,sigmoid_c},i, j, ny, nx);
+	    //rH -= j_calve.res;
+
 
 	    float H_l = get_cell(H,i,j-1,ny,nx);
 	    float u_l = get_vfacet(u,i,j,ny,nx);
 	    HorizontalFluxJacobian j_l = get_horizontal_flux_jac({u_l,H_l,H_c}, i, j, ny, nx);
 	    rH -= j_l.res*dx_inv;
+	    
+	    float bed_l = get_cell(bed,i,j-1,ny,nx);
+	    FacetCalvingJacobian j_calve_l = get_facet_calving_jac({H_c,H_l,bed_c,bed_l,calving_rate,sigmoid_c},i,j,ny,nx);
+	    rH += j_calve_l.res*dx_inv;
 
 	    float H_r = get_cell(H,i,j+1,ny,nx);
 	    float u_r = get_vfacet(u,i,j+1,ny,nx);
 	    HorizontalFluxJacobian j_r = get_horizontal_flux_jac({u_r,H_c,H_r}, i, j + 1, ny, nx);
             rH += j_r.res*dx_inv;
+	    
+	    float bed_r = get_cell(bed,i,j+1,ny,nx);
+	    FacetCalvingJacobian j_calve_r = get_facet_calving_jac({H_c,H_r,bed_c,bed_r,calving_rate,sigmoid_c},i,j+1,ny,nx);
+	    rH += j_calve_r.res*dx_inv;
 
 	    float H_t = get_cell(H,i-1,j,ny,nx);
 	    float v_t = get_hfacet(v,i,j,ny,nx);
 	    VerticalFluxJacobian j_t = get_vertical_flux_jac({v_t,H_t,H_c}, i, j, ny, nx);
 	    rH += j_t.res*dx_inv;
 
+	    float bed_t = get_cell(bed,i-1,j,ny,nx);
+	    FacetCalvingJacobian j_calve_t = get_facet_calving_jac({H_c,H_t,bed_c,bed_t,calving_rate,sigmoid_c},i,j,ny,nx);
+	    rH += j_calve_t.res*dx_inv;
+
+
 	    float H_b = get_cell(H,i+1,j,ny,nx);
 	    float v_b = get_hfacet(v,i+1,j,ny,nx);
 	    VerticalFluxJacobian j_b = get_vertical_flux_jac({v_b,H_c,H_b}, i + 1, j, ny, nx);
             rH -= j_b.res*dx_inv;
+
+
+	    float bed_b = get_cell(bed,i+1,j,ny,nx);
+	    FacetCalvingJacobian j_calve_b = get_facet_calving_jac({H_c,H_b,bed_c,bed_b,calving_rate,sigmoid_c},i+1,j,ny,nx);
+	    rH += j_calve_b.res*dx_inv;
 
 	    float masked = get_cell(mask,i,j,ny,nx);
 	    float thklim = get_cell(gamma,i,j,ny,nx);
@@ -192,6 +214,10 @@ void compute_residual(
 	    TauDxJacobian tau_dx = get_tau_dx_jac({H_l,H_c,bed_l,bed_c,sigmoid_c},dx_inv,i,j,ny,nx);
 	    ru_l -= tau_dx.res;
 	    }
+
+	    if (j == 0 || j == nx) {
+		ru_l = get_vfacet(u,i,j,ny,nx);
+	    }	
 	    r_u[i * (nx + 1) + j] = ru_l;
 	}
 
@@ -298,6 +324,10 @@ void compute_residual(
 	    rv_t -= tau_dy.res;
 	    }
 
+	    if (i == 0 || i == ny) {
+		rv_t = get_hfacet(v,i,j,ny,nx);
+	    }	
+
 	    r_v[i * nx + j] = rv_t;
 	}
     }
@@ -344,6 +374,7 @@ void compute_jvp(
 
     populate_viscosity(eta_local, bi, bj, i, j, u, v, d_u, d_v, B, n, eps_reg, dx, ny, nx);
 
+    __syncthreads();
     bool is_active = (threadIdx.x >= halo && threadIdx.x < blockDim.x - halo) &&
                      (threadIdx.y >= halo && threadIdx.y < blockDim.y - halo);
 
@@ -645,6 +676,7 @@ void compute_vjp(
 
     populate_viscosity(eta_local, bi, bj, i, j, u, v, lambda_u, lambda_v, B, n, eps_reg, dx, ny, nx);
 
+    __syncthreads();
     bool is_active = (threadIdx.x >= halo && threadIdx.x < blockDim.x - halo) &&
                      (threadIdx.y >= halo && threadIdx.y < blockDim.y - halo);
 

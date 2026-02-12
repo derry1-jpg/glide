@@ -23,8 +23,8 @@ OUTPUT_DIR = "./output"
 
 SKIP = 6           # Geometry downsampling factor
 DT = 25.0          # Time step (years)
-N_STEPS = 200      # Number of time steps
-N_LEVELS = 5       # Multigrid levels
+N_STEPS = 100      # Number of time steps
+N_LEVELS = 6       # Multigrid levels
 N_VCYCLES = 3      # V-cycles per time step
 
 # Physical constants
@@ -39,10 +39,26 @@ N_GLEN = 3.0
 print("Loading geometry...")
 data = load_bitterroot_dem()
 bed = data.values.squeeze()[100:-100,100:-100]
-srf = bed + 0.1
-thk = srf - bed
 x = data.x.values[100:-100]
 y = data.y.values[100:-100]
+
+factor = 2**N_LEVELS
+nx_target = (len(x) // factor) * factor
+ny_target = (len(y) // factor) * factor
+
+# Center the subregion
+x_start = (len(x) - nx_target) // 2
+y_start = (len(y) - ny_target) // 2
+
+x_slice = slice(x_start, x_start + nx_target)
+y_slice = slice(y_start, y_start + ny_target)
+
+x = x[x_slice]
+y = y[y_slice]
+bed = bed[y_slice,x_slice]
+srf = bed + 0.1
+thk = srf - bed
+
 ny,nx = srf.shape
 dx = x[1]-x[0]
 

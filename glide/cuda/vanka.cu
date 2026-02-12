@@ -38,6 +38,7 @@ void vanka_smooth(
     if (i < 0 || i >= ny || j<0 || j >= nx) return;
 
     populate_viscosity(eta_local, bi, bj, i, j, u, v, B, n, eps_reg, dx, ny, nx);
+    __syncthreads();
 
     bool is_active = (threadIdx.x >= halo && threadIdx.x < blockDim.x - halo) &&
                      (threadIdx.y >= halo && threadIdx.y < blockDim.y - halo);
@@ -81,10 +82,10 @@ void vanka_smooth(
 	    J[24] = 1.0f / dt;
 	    r[4] += H_c/dt;// H_prev/dt - smb handled by f_H 
 
-	    float bed_c = get_cell(bed,i,j,ny,nx);
-	    CellCalvingJacobian j_calve = get_cell_calving_jac({H_c,bed_c,calving_rate,sigmoid_c},i, j, ny, nx);
-	    J[24] -= j_calve.d_H;
-	    r[4] -= j_calve.res;
+	    //float bed_c = get_cell(bed,i,j,ny,nx);
+	    //CellCalvingJacobian j_calve = get_cell_calving_jac({H_c,bed_c,calving_rate,sigmoid_c},i, j, ny, nx);
+	    //J[24] -= j_calve.d_H;
+	    //r[4] -= j_calve.res;
 
 	    // X-Fluxes
 	    float H_l = get_cell(H,i,j-1,ny,nx);
@@ -93,11 +94,22 @@ void vanka_smooth(
 	    J[24] -= j_l.d_H_r * dx_inv;
 	    r[4]  -= j_l.res   * dx_inv;
 
+	    float bed_c = get_cell(bed,i,j,ny,nx);
+	    float bed_l = get_cell(bed,i,j-1,ny,nx);
+	    FacetCalvingJacobian j_calve_l = get_facet_calving_jac({H_c,H_l,bed_c,bed_l,calving_rate,sigmoid_c},i,j,ny,nx);
+	    J[24] += j_calve_l.d_H_this * dx_inv;
+	    r[4] += j_calve_l.res*dx_inv;
+
 	    float H_r = get_cell(H,i,j+1,ny,nx);
 	    HorizontalFluxJacobian j_r = get_horizontal_flux_jac({u_r, H_c, H_r}, i, j+1, ny, nx);
 	    J[21] += j_r.d_u   * dx_inv;
 	    J[24] += j_r.d_H_l * dx_inv;
 	    r[4]  += j_r.res   * dx_inv;
+	    
+	    float bed_r = get_cell(bed,i,j+1,ny,nx);
+	    FacetCalvingJacobian j_calve_r = get_facet_calving_jac({H_c,H_r,bed_c,bed_r,calving_rate,sigmoid_c},i,j,ny,nx);
+	    J[24] += j_calve_r.d_H_this * dx_inv;
+	    r[4] += j_calve_r.res * dx_inv;
 
 	    // Y-Fluxes (Vertical in grid coordinates)
 	    float H_t = get_cell(H,i-1,j,ny,nx);
@@ -106,11 +118,22 @@ void vanka_smooth(
 	    J[24] += j_t.d_H_b * dx_inv;
 	    r[4]  += j_t.res   * dx_inv;
 
+	    float bed_t = get_cell(bed,i-1,j,ny,nx);
+	    FacetCalvingJacobian j_calve_t = get_facet_calving_jac({H_c,H_t,bed_c,bed_t,calving_rate,sigmoid_c},i,j,ny,nx);
+	    J[24] += j_calve_t.d_H_this * dx_inv;
+	    r[4] += j_calve_t.res * dx_inv;
+
 	    float H_b = get_cell(H,i+1,j,ny,nx);
 	    VerticalFluxJacobian j_b = get_vertical_flux_jac({v_b, H_c, H_b}, i+1, j, ny, nx);
 	    J[23] -= j_b.d_v   * dx_inv;
 	    J[24] -= j_b.d_H_t * dx_inv;
 	    r[4]  -= j_b.res   * dx_inv;
+
+	    float bed_b = get_cell(bed,i+1,j,ny,nx);
+	    FacetCalvingJacobian j_calve_b = get_facet_calving_jac({H_c,H_b,bed_c,bed_b,calving_rate,sigmoid_c},i,j,ny,nx);
+	    J[24] += j_calve_b.d_H_this * dx_inv;
+	    r[4] += j_calve_b.res * dx_inv;
+
 
 	    }
             
@@ -423,7 +446,38 @@ void vanka_smooth(
 	    J[19] -= tau_dy_b.d_H_t;
 	    }
 
-	    if ((H_c - dt*r[4]) <= (thklim + 0.1f)) {
+            J[0]  -= 1.0f;
+            J[6]  -= 1.0f;
+            J[12] -= 1.0f;
+            J[18] -= 1.0f;
+
+	     
+	    if (j == 0) {
+	    	for(int k=0; k<5; ++k) J[0 + k] = 0.0f;
+		J[0] = 1.0f;
+		r[0] = u_l;
+	    }
+
+	    if (j == (nx - 1)) {
+	    	for(int k=0; k<5; ++k) J[5 + k] = 0.0f;
+		J[6] = 1.0f;
+		r[1] = u_r;
+	    }
+
+	    if (i == 0) {
+	    	for(int k=0; k<5; ++k) J[10 + k] = 0.0f;
+		J[12] = 1.0f;
+		r[2] = v_t;
+	    }
+
+	    if (i == (ny-1)) {
+	    	for(int k=0; k<5; ++k) J[15 + k] = 0.0f;
+		J[18] = 1.0f;
+		r[3] = v_b;
+	    }
+	    
+
+	    if ((H_c - dt*r[4]) <= (thklim)) {
 		// Active set constraint: Force H = thklim
 		masked = 1.0f;
 		for(int k=0; k<5; ++k) J[20 + k] = 0.0f;
@@ -434,17 +488,11 @@ void vanka_smooth(
 	    
 	    }
 
-	    rnorm = r[0]*r[0] + r[1]*r[1] + r[2]*r[2] + r[3]*r[3] + r[4]*r[4];
-
-            J[0]  -= 1.0f;
-            J[6]  -= 1.0f;
-            J[12] -= 1.0f;
-            J[18] -= 1.0f;
             J[24] += 1.0f;
+	    rnorm = r[0]*r[0] + r[1]*r[1] + r[2]*r[2] + r[3]*r[3] + r[4]*r[4];
 
 	    float delta_x[5] = {0};
 	    lu_5x5_solve(J,r,delta_x);
-
 
             float relaxation_factor = 0.5f;
 
@@ -533,6 +581,8 @@ void vanka_smooth_adjoint(
     if (i < 0 || i >= ny || j<0 || j >= nx) return;
 
     populate_viscosity(eta_local, bi, bj, i, j, u, v, B, n, eps_reg, dx, ny, nx);
+
+    __syncthreads();
 
     bool is_active = (threadIdx.x >= halo && threadIdx.x < blockDim.x - halo) &&
                      (threadIdx.y >= halo && threadIdx.y < blockDim.y - halo);
@@ -945,6 +995,7 @@ void vanka_smooth_local(
 
     populate_viscosity(eta_local, bi, bj, i, j, u, v, B, params->n, params->eps_reg, dx, ny, nx);
 
+    __syncthreads();
     bool is_active = (threadIdx.x >= halo && threadIdx.x < blockDim.x - halo) &&
                      (threadIdx.y >= halo && threadIdx.y < blockDim.y - halo);
 

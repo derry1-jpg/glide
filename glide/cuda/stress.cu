@@ -271,12 +271,12 @@ TauBxJacobian get_tau_bx_jac(
     float unorm_sq_deriv = (s.m - 1.0f)/2.0f * __powf(unorm_sq + s.u_reg,(s.m - 1.0f)/2.0f - 1.0f);
 
     jac.res = -beta_eff * unorm_sq_pow * s.u;
-    jac.d_u = -beta_eff * unorm_sq_pow;
-    //jac.d_u = -beta_eff * (2.0f * unorm_sq_deriv * s.u * s.u + unorm_sq_pow);
-    //jac.d_v_tl = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_tl);
-    //jac.d_v_tr = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_tr);
-    //jac.d_v_bl = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_bl);
-    //jac.d_v_br = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_br);
+    //jac.d_u = -beta_eff * unorm_sq_pow;
+    jac.d_u = -beta_eff * (2.0f * unorm_sq_deriv * s.u * s.u + unorm_sq_pow);
+    jac.d_v_tl = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_tl);
+    jac.d_v_tr = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_tr);
+    jac.d_v_bl = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_bl);
+    jac.d_v_br = -beta_eff * (0.5f * unorm_sq_deriv * s.u * s.v_br);
     jac.d_beta_l = -0.5f*grounded_l * unorm_sq_pow * s.u;
     jac.d_beta_r = -0.5f*grounded_r * unorm_sq_pow * s.u;
 
@@ -364,12 +364,12 @@ TauByJacobian get_tau_by_jac(
     float unorm_sq_deriv = (s.m - 1.0f)/2.0f * __powf(unorm_sq + s.u_reg,(s.m - 1.0f)/2.0f - 1.0f);
 
     jac.res = -beta_eff * unorm_sq_pow * s.v;
-    jac.d_v = -beta_eff * unorm_sq_pow;
-    //jac.d_v = -beta_eff * (2.0f * unorm_sq_deriv * s.v * s.v + unorm_sq_pow);
-    //jac.d_u_tl = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_tl);
-    //jac.d_u_tr = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_tr);
-    //jac.d_u_bl = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_bl);
-    //jac.d_u_br = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_br);
+    //jac.d_v = -beta_eff * unorm_sq_pow;
+    jac.d_v = -beta_eff * (2.0f * unorm_sq_deriv * s.v * s.v + unorm_sq_pow);
+    jac.d_u_tl = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_tl);
+    jac.d_u_tr = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_tr);
+    jac.d_u_bl = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_bl);
+    jac.d_u_br = -beta_eff * (0.5f * unorm_sq_deriv * s.v * s.u_br);
     jac.d_beta_t = -0.5f*grounded_t * unorm_sq_pow * s.v;
     jac.d_beta_b = -0.5f*grounded_b * unorm_sq_pow * s.v;
 

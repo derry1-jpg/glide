@@ -188,7 +188,7 @@ class Grid:
         grid_size = (self.nx // stride + 1, self.ny // stride + 1)
         return grid_size, block_size, stride, halo
 
-    def compute_residual(self, use_mask=True):
+    def compute_residual(self, use_mask=True, enable_calving=True):
         """Compute residual r = f - F(U)."""
         kernel = self.kernels.ice.get_function('compute_residual')
         grid_size, block_size, stride, halo = self._kernel_config()
@@ -196,7 +196,12 @@ class Grid:
         if use_mask:
             mask = self.mask
         else:
-            mask = self.Z_H         
+            mask = self.Z_H     
+
+        if enable_calving:
+            calving_rate = self._calving_rate
+        else:
+            calving_rate = cp.float32(0.0)
 
         kernel(grid_size, block_size,
                (self.r_u, self.r_v, self.r_H,
@@ -207,13 +212,13 @@ class Grid:
                 self._n, self._eps_reg, 
                 self._m, self._u_reg,
                 self._water_drag,
-                self._calving_rate, self._sigmoid_c,
+                calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
 
 
 
-    def compute_F(self, use_mask=True):
+    def compute_F(self, use_mask=True, enable_calving=True):
         """Compute F(U) (operator evaluation without RHS)."""
         kernel = self.kernels.ice.get_function('compute_residual')
         grid_size, block_size, stride, halo = self._kernel_config()
@@ -221,7 +226,13 @@ class Grid:
         if use_mask:
             mask = self.mask
         else:
-            mask = self.Z_H   
+            mask = self.Z_H  
+
+        if enable_calving:
+            calving_rate = self._calving_rate
+        else:
+            calving_rate = cp.float32(0.0)
+
 
         kernel(grid_size, block_size,
                (self.F_u, self.F_v, self.F_H,
@@ -232,7 +243,7 @@ class Grid:
                 self._n, self._eps_reg, 
                 self._m, self._u_reg,
                 self._water_drag,
-                self._calving_rate, self._sigmoid_c,
+                calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
 
@@ -267,10 +278,15 @@ class Grid:
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
 
-    def vanka_smooth(self, n_inner=1):
+    def vanka_smooth(self, n_inner=1, enable_calving=True):
         """Apply one Vanka smoother pass (red-black)."""
         kernel = self.kernels.ice.get_function('vanka_smooth')
         grid_size, block_size, stride, halo = self._kernel_config()
+
+        if enable_calving:
+            calving_rate = self._calving_rate
+        else:
+            calving_rate = cp.float32(0.0)
 
         kernel(grid_size, block_size,
                (self.delta_u, self.delta_v, self.delta_H, self.mask,
@@ -280,7 +296,7 @@ class Grid:
                 self._n, self._eps_reg, 
                 self._m, self._u_reg,
                 self._water_drag,
-                self._calving_rate, self._sigmoid_c,
+                calving_rate, self._sigmoid_c,
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo,
                 n_inner))
@@ -305,15 +321,15 @@ class Grid:
                 color, omega))
         self.Lambda[:] = self.Lambda_out[:]
 
-    def vanka_sweep(self, n_iter, verbose=False,n_inner=30, omega=cp.float32(0.5)):
+    def vanka_sweep(self, n_iter, verbose=False,n_inner=30, omega=cp.float32(0.5),enable_calving=True):
         """Perform n_iter red-black Vanka smoothing sweeps."""
         for _ in range(n_iter):
             self.delta_U.fill(0.0)
-            self.vanka_smooth(n_inner=n_inner)
+            self.vanka_smooth(n_inner=n_inner,enable_calving=enable_calving)
             self.U[:] += omega * self.delta_U
-            if verbose:
-                self.compute_residual(use_mask=True)
-                print(cp.linalg.norm(self.r_u),
+        if verbose:
+            self.compute_residual(use_mask=True)
+            print(self.dx,cp.linalg.norm(self.r_u),
                       cp.linalg.norm(self.r_v),
                       cp.linalg.norm(self.r_H))
 

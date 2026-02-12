@@ -51,10 +51,10 @@ HorizontalFluxJacobian get_horizontal_flux_jac(
     }
 
     float H_avg = 0.5f*(s.H_l + s.H_r);
-    //float u_mag = sqrtf(s.u * s.u + 10.0f);//fabsf(s.u);
-    //float u_sign = s.u / u_mag;//copysignf(1.0f, s.u);
-    float u_mag = fabsf(s.u);
-    float u_sign = copysignf(1.0f, s.u);
+    float u_mag = sqrtf(s.u * s.u + 10.0f);//fabsf(s.u);
+    float u_sign = s.u / u_mag;//copysignf(1.0f, s.u);
+    //float u_mag = fabsf(s.u);
+    //float u_sign = copysignf(1.0f, s.u);
     jac.res = H_avg*s.u - 0.5f*u_mag*(s.H_r - s.H_l);
 
     jac.d_H_l = 0.5f*(s.u + u_mag);
@@ -122,10 +122,10 @@ VerticalFluxJacobian get_vertical_flux_jac(
     }
 
     float H_avg = 0.5f*(s.H_t + s.H_b);
-    //float v_mag = sqrtf(s.v * s.v + 10.0f);//fabsf(s.v);
-    //float v_sign = s.v / v_mag;//copysignf(1.0f, s.v);
-    float v_mag = fabsf(s.v);
-    float v_sign = copysignf(1.0f, s.v);
+    float v_mag = sqrtf(s.v * s.v + 10.0f);//fabsf(s.v);
+    float v_sign = s.v / v_mag;//copysignf(1.0f, s.v);
+    //float v_mag = fabsf(s.v);
+    //float v_sign = copysignf(1.0f, s.v);
     jac.res = H_avg*s.v - 0.5f*v_mag*(s.H_t - s.H_b);
 
     jac.d_H_t = 0.5f*(s.v - v_mag);
@@ -210,4 +210,76 @@ DualFloat get_cell_calving_dual(
     CellCalvingJacobian jac = get_cell_calving_jac(s.get_primals(),i,j,ny,nx);
     return {jac.res,jac.apply_jvp(s.get_diffs())};
 }
+
+struct FacetCalvingStencil {
+    float H_this, H_other;
+    float bed_this, bed_other;
+    float calving_rate;
+    float sigmoid_c;
+};
+
+struct FacetCalvingStencilDual {
+    DualFloat H_this, H_other;
+    float bed_this, bed_other;
+    float calving_rate;
+    float sigmoid_c;
+
+    __device__ __forceinline__
+    FacetCalvingStencil get_primals() const {
+        return {H_this.v,H_other.v,bed_this,bed_other,calving_rate,sigmoid_c};
+    }
+
+    __device__ __forceinline__
+    FacetCalvingStencil get_diffs() const {
+        return {H_this.d,H_other.d,0.0f,0.0f,0.0f,0.0f};
+    }
+};
+
+struct FacetCalvingJacobian {
+    float res;
+    float d_H_this;
+
+    __device__ __forceinline__
+    float apply_jvp(const FacetCalvingStencil& dot) const {
+        return d_H_this * dot.H_this;
+    }
+
+};
+
+__device__
+FacetCalvingJacobian get_facet_calving_jac(
+    FacetCalvingStencil s,
+    int i, int j,  // Defined on facets
+    int ny, int nx
+    ) {
+
+    FacetCalvingJacobian jac = {0};
+
+    float z_this = s.bed_this + 0.917f*s.H_this;
+    float grounded_this = sigmoid(z_this, s.sigmoid_c);
+
+    float z_other = s.bed_other + 0.917f*s.H_other;
+    float grounded_other = sigmoid(z_other, s.sigmoid_c);
+
+    float coeff = (1.0f - grounded_this)*(1.0f - grounded_other);
+    jac.res = coeff * s.calving_rate * s.H_this;
+    jac.d_H_this = coeff * s.calving_rate;
+    
+    return jac;
+}
+
+__device__ __forceinline__
+DualFloat get_facet_calving_dual(
+    FacetCalvingStencilDual s,
+    int i, int j,
+    int ny, int nx) {
+    FacetCalvingJacobian jac = get_facet_calving_jac(s.get_primals(),i,j,ny,nx);
+    return {jac.res,jac.apply_jvp(s.get_diffs())};
+}
+
+
+
+
+
+
 

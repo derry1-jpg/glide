@@ -161,6 +161,7 @@ class Grid:
         self.smb = cp.zeros((ny, nx), dtype=cp.float32)
         self.mask = cp.zeros((ny, nx), dtype=cp.float32)
         self.error_mask = cp.zeros((ny, nx), dtype=cp.float32)
+        self.error_mask.fill(1)
         self.gamma = cp.zeros((ny, nx), dtype=cp.float32)
         self.grounded = cp.zeros((ny,nx),dtype=cp.float32)
 
@@ -298,6 +299,8 @@ class Grid:
     def compute_residual_adjoint(self,use_mask=True,enable_calving=True):
         self.compute_vjp(use_mask=use_mask,enable_calving=enable_calving)
         self.r_adj[:] = self.f_adj - self.l
+        if use_mask:
+            self.r_adj_H[self.mask>1e-3] = 0.0
 
     def compute_F_adjoint(self,use_mask=True,enable_calving=True):
         self.compute_vjp(use_mask=use_mask,enable_calving=enable_calving)
@@ -364,7 +367,6 @@ class Grid:
                 self.ny, self.nx, stride, halo,
                 n_inner))
 
-
     def vanka_smooth_adjoint(self, use_mask=True, enable_calving=True, recompute_grounded=False):
         """Apply adjoint Vanka smoother pass."""
         kernel = self.kernels.ice.get_function('vanka_smooth_adjoint')
@@ -400,6 +402,7 @@ class Grid:
 
     def vanka_sweep(self, n_iter, verbose=False,n_inner=30, omega=cp.float32(0.5),enable_calving=True,recompute_grounded=True):
         """Perform n_iter red-black Vanka smoothing sweeps."""
+
         for _ in range(n_iter):
             self.vanka_smooth(n_inner=n_inner,enable_calving=enable_calving,recompute_grounded=recompute_grounded)
             self.U[:] += omega * self.delta_U
@@ -452,3 +455,31 @@ class Grid:
 
     def set_rhs(self):
         self.f_H[:,:] = self.H_prev/self.dt + self.smb
+
+    def vanka_dump(self, enable_calving=True):
+        """Apply one Vanka smoother pass (red-black)."""
+        kernel = self.kernels.ice.get_function('vanka_dump')
+        grid_size, block_size, stride, halo = self._kernel_config()
+
+        if enable_calving:
+            calving_rate = self._calving_rate
+        else:
+            calving_rate = cp.float32(0.0)
+
+
+        J = cp.zeros((self.nh,25),dtype=cp.float32)
+        r = cp.zeros((self.nh,5),dtype=cp.float32)
+        kernel(grid_size, block_size,
+               (J,r,
+                self.u, self.v, self.H, self.grounded,
+                self.f_u, self.f_v, self.f_H,
+                self.bed, self.B, self.beta, self.gamma,
+                self._n, self._eps_reg, 
+                self._m, self._u_reg,
+                self._water_drag,
+                calving_rate, self._sigmoid_c,
+                self.dx, self.dt,
+                self.ny, self.nx, stride, halo
+                ))
+
+        return J,r

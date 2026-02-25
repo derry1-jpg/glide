@@ -23,6 +23,14 @@ def restrict_solution(grid):
     restrict_cell_centered(grid.grounded, kernels, f_coarse=child.grounded)
     restrict_max_pool(grid.mask, kernels, f_coarse=child.mask)
 
+def restrict_rhs(grid):
+    """Restrict solution from grid to child."""
+    child = grid.child
+    kernels = grid.kernels
+    restrict_vfacet(grid.f_u, kernels, u_coarse=child.f_u)
+    restrict_hfacet(grid.f_v, kernels, v_coarse=child.f_v)
+    restrict_cell_centered(grid.f_H, kernels, f_coarse=child.f_H)
+
 def restrict_adjoint_solution(grid):
     """Restrict solution from grid to child."""
     child = grid.child
@@ -70,7 +78,7 @@ def restrict_solution_to_hierarchy(grid):
         restrict_solution_to_hierarchy(grid.child)
 
 
-def fascd_vcycle(grid, thklim, finest=False,verbose=False,omega=cp.float32(0.5),pre_steps=0,post_steps=50,final_steps=150,coarse_steps=200,newton_iterations=30):
+def fascd_vcycle(grid, thklim, finest=False,verbose=False,omega=cp.float32(0.5),pre_steps=0,post_steps=150,final_steps=0,coarse_steps=200,newton_iterations=30):
     """
     FASCD V-cycle for the coupled SSA + mass conservation system.
 
@@ -95,7 +103,7 @@ def fascd_vcycle(grid, thklim, finest=False,verbose=False,omega=cp.float32(0.5),
     if grid.child is None:
         # Coarsest level: direct solve
         grid.gamma[:] = grid.w_H + grid.chi[:]
-        grid.vanka_sweep(coarse_steps,n_inner=newton_iterations,verbose=verbose,omega=omega,enable_calving=finest,recompute_grounded=False)
+        grid.vanka_sweep(coarse_steps,n_inner=newton_iterations,verbose=verbose,omega=omega,enable_calving=finest,recompute_grounded=finest)
         grid.gamma.fill(thklim)
         return
 
@@ -157,7 +165,7 @@ def adjoint_vcycle_fas(grid,
                        pre_steps=10,
                        post_steps=30,
                        final_steps=100,
-                       coarse_steps=400):
+                       coarse_steps=200):
     """
     FAS (Full Approximation Scheme) adjoint V-cycle.
 

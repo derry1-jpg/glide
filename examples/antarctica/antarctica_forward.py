@@ -26,8 +26,8 @@ from glide.data import (
 OUTPUT_DIR = "./output"
 
 SKIP = 4           # Geometry downsampling factor
-DT = 25.0          # Time step (years)
-N_STEPS = 20      # Number of time steps
+DT = 20.0          # Time step (years)
+N_STEPS = 20     # Number of time steps
 N_LEVELS = 5       # Multigrid levels
 N_VCYCLES = 10      # V-cycles per time step
 
@@ -84,8 +84,9 @@ beta = cp.array(pickle.load(open(BETA_PATH, 'rb')))
 # =============================================================================
 
 # Emulate fixed calving front
-smb[surface == 0] = -40.0
-#beta[beta>3.5] = 3.5
+smb[surface == 0] = -50.0
+#beta[beta>2.5] = 2.5
+#beta.fill(2.5)
 
 
 # Compute B (rate factor - we measure driving stress in units of head, so the rho g factor gets subsumed into definitions of beta and B!)
@@ -96,7 +97,7 @@ print("Initializing physics...")
 physics = IcePhysics(ny, nx, dx, n_levels=N_LEVELS, 
         thklim=0.1,
         n=3.0,eps_reg=1e-5,
-        m=1./3.,u_reg=100.0,
+        m=1.0/3.,u_reg=10.0**2,
         water_drag=1e-5,
         calving_rate=0.0,sigmoid_c=0.1)
 physics.set_geometry(bed, thickness)
@@ -105,15 +106,15 @@ physics.set_parameters(B=B, beta=beta, smb=smb)
 # Access the grid hierarchy
 grid = physics.grid
 grid.compute_grounded()
-smb[grid.grounded.get()<0.1] -= 1.0
+smb[grid.grounded.get()<0.1] -= 0.25
 physics.set_parameters(smb=smb)
 
 # =============================================================================
 # Set up output
 # =============================================================================
 
-writer = VTIWriter(OUTPUT_DIR, base="antarctica", dx=dx)
-write_vti(f"{OUTPUT_DIR}/bed.vti", {'bed': grid.bed}, dx)
+writer = VTIWriter(OUTPUT_DIR, base="antarctica", dx=grid.dx)
+write_vti(f"{OUTPUT_DIR}/bed.vti", {'bed': grid.bed}, grid.dx)
 
 # =============================================================================
 # Time stepping
@@ -126,7 +127,7 @@ for step in range(N_STEPS):
     print(f"Step {step}: t = {t:.1f} yr, H_mean = {float(grid.H.mean()):.1f} m")
 
     # Forward solve
-    u, v, H = physics.forward(dt=DT, n_vcycles=N_VCYCLES, verbose=True)
+    u, v, H = physics.forward(dt=DT, n_vcycles=N_VCYCLES, verbose=True, rtol=1e-3,atol=10.0)
     t += DT
 
     # Output

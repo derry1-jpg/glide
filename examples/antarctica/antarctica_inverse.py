@@ -12,7 +12,7 @@ from scipy.optimize import fmin_l_bfgs_b
 
 from glide import IcePhysics
 from glide.io import VTIWriter, write_vti
-from glide.physics import huber_loss, tikhonov_regularization
+from glide.physics import abs_loss, huber_loss, tikhonov_regularization
 from glide.data import (
     load_bedmachine,
     load_velocity_mosaic,
@@ -86,11 +86,11 @@ ny,nx = dataset.ny,dataset.nx
 dx = dataset.dx
 bed = dataset.bed.values
 beta = dataset.beta.values
-beta.fill(0.5)
+beta.fill(1.0)
 surface = dataset.surface.values
 thickness = dataset.thickness.values
 smb = dataset.smb.values
-smb[surface == 0] = -10.0
+smb[surface == 0] = -40.0
 
 u_obs_cell = dataset.vx.values
 v_obs_cell = dataset.vy.values
@@ -115,7 +115,7 @@ print("Initializing physics...")
 physics = IcePhysics(ny, nx, dx, n_levels=N_LEVELS, 
         thklim=0.1,
         n=3.0,eps_reg=1e-5,
-        m=1.0/3.0,u_reg=100.0,
+        m=1./3.,u_reg=10.0**2,
         water_drag=1e-5,
         calving_rate=0.0,sigmoid_c=0.1)
 
@@ -129,6 +129,10 @@ kernels = get_kernels()
 # Build observation hierarchy for multi-resolution optimization
 # =============================================================================
 
+    # Forward solve
+
+restrict_solution_to_hierarchy(grid)
+
 obs_hierarchy = [(u_obs, v_obs)]
 current_u, current_v = u_obs, v_obs
 g = grid
@@ -138,8 +142,8 @@ while g.child is not None:
     obs_hierarchy.append((current_u, current_v))
     g = g.child
 
-#for level_idx in range(N_LEVELS - 1, -1, -1):
-for level_idx in [4,3,2,1,0]:
+
+for level_idx in [4,4,3,2,1,0]:
     physics.set_grid_level(level_idx)
     current_grid = physics.grid
     u_obs_level, v_obs_level = obs_hierarchy[level_idx]
@@ -160,6 +164,12 @@ for level_idx in [4,3,2,1,0]:
     )
 
     counter = [0]
+    H0 = cp.array(current_grid.H_prev)
+    for i in range(3):
+        u, v, H = physics.forward(dt=10.0, n_vcycles=10, verbose=True, rtol=1e-3)
+    uref = cp.array(u)
+    vref = cp.array(v)
+    Href = cp.array(H)
 
     def objective(log_beta_flat):
 
@@ -167,25 +177,21 @@ for level_idx in [4,3,2,1,0]:
         current_grid.beta[:] = cp.exp(log_beta)
         restrict_parameters_to_hierarchy(current_grid)
 
-
         current_grid.u.fill(0)
         current_grid.v.fill(0)
-        current_grid.H[:] = current_grid.H_prev
-        u, v, H = physics.forward(dt=1.0, n_vcycles=10, verbose=False,update_geometry=False)
+        current_grid.H[:] = Href
+        u, v, H = physics.forward(dt=10.0, n_vcycles=10, verbose=False,update_geometry=False,rtol=1e-3,atol=10.0)
 
         # Compute loss
-        J_data, dJdu, dJdv = huber_loss(current_grid.u, current_grid.v, u_obs_level, v_obs_level,epsilon=1.0,mask_threshold=0.001)
+        J_data, dJdu, dJdv = abs_loss(current_grid.u, current_grid.v, u_obs_level, v_obs_level,mask_threshold=0.1)
         dJdH = cp.zeros_like(H)
     
-        physics.adjoint(dJdu,dJdv,dJdH,n_vcycles=3,verbose=False)
+        physics.adjoint(dJdu,dJdv,dJdH,n_vcycles=2,verbose=False)
         grad_log_beta = current_grid.beta*current_grid.grad_beta
 
         J_tikh,tikh_grad = tikhonov_regularization(log_beta,weight=cp.float32(REG_WEIGHT))
         J = J_data + J_tikh
         grad_log_beta += tikh_grad
-
-        #J_norm = 0.5*(log_beta**2).sum()/log_beta.size
-        #J_norm_grad = log_beta/log_beta.size
 
         print(f"Level: {level_idx} {counter},  Loss: {J:.4f}, Loss Data: {J_data:.4f}, Loss Tikh: {J_tikh:.4f}")
 
@@ -201,21 +207,18 @@ for level_idx in [4,3,2,1,0]:
 
         writer.write_step(counter[0], counter[0], {
             'log_beta': log_beta,
-            'vel': [u_c, v_c]
+            'vel': [u_c*(1-current_grid.mask), v_c*(1-current_grid.mask)]
         })
         writer.write_pvd()
 
     x_init = cp.log(current_grid.beta).ravel().get().astype(np.float64)
-    bounds = [(-8,3)]*current_grid.nh
-    result = fmin_l_bfgs_b(
-        objective, x_init,
-        bounds=bounds,
-        callback=callback,
-        factr=1e10,
-        maxiter=200
-    )
 
-    current_grid.beta[:] = cp.exp(cp.array(result[0].reshape((current_grid.ny, current_grid.nx))).astype(cp.float32))     # Prolongate to finer grid for next level
+    for i in range(50):
+        J,grad_log_beta = objective(x_init)
+        x_init -= 0.02*np.sign(grad_log_beta)
+        callback(x_init)
+
+    current_grid.beta[:] = cp.exp(cp.array(x_init.reshape((current_grid.ny, current_grid.nx))).astype(cp.float32))     # Prolongate to finer grid for next level
     # Save result
     pickle.dump(
         current_grid.beta.get(),
@@ -224,5 +227,5 @@ for level_idx in [4,3,2,1,0]:
 
     if level_idx > 0:
         parent = physics.grids[level_idx - 1]
-        prolongate_cell_centered(current_grid.beta, kernels, H_fine=parent.beta,smooth=False)   
-
+        prolongate_cell_centered(current_grid.beta, kernels, H_fine=parent.beta,smooth=True)  
+            

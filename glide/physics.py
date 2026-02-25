@@ -181,13 +181,10 @@ class IcePhysics:
         self.grid.f_H[:, :] = self.grid.H_prev / self.grid.dt + self.grid.smb
 
         # Compute initial residual for convergence tracking
+        self.grid.vanka_smooth()
+        self.grid.compute_residual()
+        r0 = cp.linalg.norm(self.grid.r)
         if verbose:
-            self.grid.compute_residual()
-            r0 = float(cp.sqrt(
-                cp.linalg.norm(self.grid.r_u)**2 +
-                cp.linalg.norm(self.grid.r_v)**2 +
-                cp.linalg.norm(self.grid.r_H)**2
-            ))
             print(f"  Initial: |r| = {r0:.2e}, "
                   f"|r_u| = {float(cp.linalg.norm(self.grid.r_u)):.2e}, "
                   f"|r_v| = {float(cp.linalg.norm(self.grid.r_v)):.2e}, "
@@ -195,21 +192,17 @@ class IcePhysics:
 
         # Solve
         for i in range(n_vcycles):
-            fascd_vcycle(self.grid, self.thklim, finest=True)
+            fascd_vcycle(self.grid, self.thklim, omega=cp.float32(0.5), finest=True)
 
+            self.grid.compute_residual(recompute_grounded=False)
+            r1 = cp.linalg.norm(self.grid.r)
+            rel = r1 / r0 if r0 > 0 else 0.0
             if verbose:
-                self.grid.compute_residual(recompute_grounded=True)
-                r_combined = float(cp.sqrt(
-                    cp.linalg.norm(self.grid.r_u)**2 +
-                    cp.linalg.norm(self.grid.r_v)**2 +
-                    cp.linalg.norm(self.grid.r_H)**2
-                ))
-                rel = r_combined / r0 if r0 > 0 else 0.0
                 print(f"  V-cycle {i}: |r|/|r0| = {rel:.2e}, "
                       f"|r_u| = {float(cp.linalg.norm(self.grid.r_u)):.2e}, "
                       f"|r_v| = {float(cp.linalg.norm(self.grid.r_v)):.2e}, "
                       f"|r_H| = {float(cp.linalg.norm(self.grid.r_H)):.2e}")
-            if rel < rtol or r_combined < atol: 
+            if rel < rtol or r1 < atol: 
                 break
         # Update H_prev for next time step
         if update_geometry:

@@ -1,3 +1,92 @@
+
+// ============================================================
+// LU Solve for 5x5 Systems (Vanka smoother)
+// ============================================================
+__device__ void lu_5x5_solve(
+    const float* A,  // 25 entries: full 5x5 row-major
+    const float* b,  // 5 entries
+    float* x)        // 5 entries (output)
+{
+    float LU[5][5];
+
+    #pragma unroll
+    for (int i = 0; i < 5; i++) {
+        #pragma unroll
+        for (int j = 0; j < 5; j++) {
+            LU[i][j] = A[i * 5 + j];
+        }
+    }
+
+    // LU factorization (Doolittle, no pivoting)
+    #pragma unroll
+    for (int k = 0; k < 5; k++) {
+        float inv_diag = 1.0f / LU[k][k];
+        #pragma unroll
+        for (int i = k + 1; i < 5; i++) {
+            LU[i][k] *= inv_diag;
+            #pragma unroll
+            for (int j = k + 1; j < 5; j++) {
+                LU[i][j] -= LU[i][k] * LU[k][j];
+            }
+        }
+    }
+
+    // Forward solve: L*y = b
+    float y[5];
+    y[0] = b[0];
+    y[1] = b[1] - LU[1][0]*y[0];
+    y[2] = b[2] - LU[2][0]*y[0] - LU[2][1]*y[1];
+    y[3] = b[3] - LU[3][0]*y[0] - LU[3][1]*y[1] - LU[3][2]*y[2];
+    y[4] = b[4] - LU[4][0]*y[0] - LU[4][1]*y[1] - LU[4][2]*y[2] - LU[4][3]*y[3];
+
+    // Backward solve: U*x = y
+    x[4] = y[4] / LU[4][4];
+    x[3] = (y[3] - LU[3][4]*x[4]) / LU[3][3];
+    x[2] = (y[2] - LU[2][3]*x[3] - LU[2][4]*x[4]) / LU[2][2];
+    x[1] = (y[1] - LU[1][2]*x[2] - LU[1][3]*x[3] - LU[1][4]*x[4]) / LU[1][1];
+    x[0] = (y[0] - LU[0][1]*x[1] - LU[0][2]*x[2] - LU[0][3]*x[3] - LU[0][4]*x[4]) / LU[0][0];
+}
+
+__device__ __forceinline__
+void mat5x5_mat(const float* __restrict__ A,
+                const float* __restrict__ B,
+                float* __restrict__ C)
+{
+    #pragma unroll
+    for (int i = 0; i < 5; ++i)
+    {
+        #pragma unroll
+        for (int j = 0; j < 5; ++j)
+        {
+            float sum = 0.0;
+            #pragma unroll
+            for (int k = 0; k < 5; ++k)
+            {
+                sum += A[5*i + k] * B[5*k + j];
+            }
+            C[5*i + j] = sum;
+        }
+    }
+}
+
+__device__ __forceinline__
+void mat5x5_vec(const float* __restrict__ A,
+                const float* __restrict__ x,
+                float* __restrict__ y)
+{
+    #pragma unroll
+    for (int i = 0; i < 5; ++i)
+    {
+        double sum = 0.0;
+        #pragma unroll
+        for (int j = 0; j < 5; ++j)
+        {
+            sum += A[5*i + j] * x[j];
+        }
+        y[i] = sum;
+    }
+}
+	
 template <int height, int width>
 __device__ void build_5x5_vanka(
     float* __restrict__ J,

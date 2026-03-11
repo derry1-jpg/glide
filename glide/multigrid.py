@@ -8,7 +8,7 @@ for the forward problem and adjoint V-cycles for gradient computation.
 import cupy as cp
 from .kernels import (
     restrict_vfacet, restrict_hfacet, restrict_cell_centered,
-    restrict_max_pool, prolongate_vfacet, prolongate_hfacet,
+    restrict_max_pool, restrict_min_pool, prolongate_vfacet, prolongate_hfacet,
     prolongate_cell_centered
 )
 

@@ -10,8 +10,8 @@ import pickle
 import cupy as cp
 import numpy as np
 
-from glide import IcePhysics
-from glide.io import VTIWriter, write_vti
+#from glide import IcePhysics
+#from glide.io import VTIWriter, write_vti
 from glide.data import (
     load_bedmachine,
     load_smb_mar,
@@ -101,7 +101,31 @@ beta = cp.array(pickle.load(open(BETA_PATH, 'rb')))
 B_scalar = cp.float32(1e-17 ** (-1.0 / N_GLEN) / (RHO_ICE * G))
 B = B_scalar * cp.ones((ny, nx), dtype=cp.float32)
 
+from glide.grid import Grid
+grid = Grid(ny,nx,dx)
 
+grid.state.H_prev.set(thickness)
+grid.state.H.set(thickness)
+grid.geometry.bed.set(bed)
+grid.forcing.smb.set(smb)
+grid.rheology.B.set(B)
+grid.sliding.beta.set(beta)
+
+grid.sliding.m.set(1./3.)
+grid.calving.calving_rate.set(2000.0)
+grid.rheology.eps_reg.set(1e-5)
+grid.geometry.sigmoid_c.set(0.1)
+
+from glide.operators import ForwardOperators
+dt = cp.float32(10.0)
+operators = ForwardOperators(grid,use_fast_math=True)
+operators.set_rhs(dt)
+operators.compute_residual(dt)
+#operators.vanka_sweep(dt,300,verbose=True)
+
+
+
+"""
 print("Initializing physics...")
 physics = IcePhysics(ny, nx, dx, n_levels=N_LEVELS, 
         thklim=0.1,
@@ -148,5 +172,5 @@ for step in range(N_STEPS):
     writer.write_pvd()
 
 print("Done!")
-
+"""
 

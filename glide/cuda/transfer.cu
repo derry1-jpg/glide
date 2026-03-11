@@ -100,6 +100,32 @@ void restrict_max_pool(
     }
 }
 
+extern "C" __global__
+void restrict_min_pool(
+    const float* h_fine,      // (ny_fine, nx_fine)
+    float* h_coarse,          // (ny_coarse, nx_coarse)
+    const int ny_coarse,
+    const int nx_coarse)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < ny_coarse * nx_coarse) {
+        int J = idx / nx_coarse;
+        int I = idx % nx_coarse;
+        
+        // Full-weighting (average 4 fine cells)
+        float h_tl = h_fine[2*J * (2*nx_coarse) + 2*I];
+        float h_tr = h_fine[2*J * (2*nx_coarse) + 2*I + 1];
+        float h_bl =  h_fine[(2*J + 1) * (2*nx_coarse) + 2*I];
+        float h_br =  h_fine[(2*J + 1) * (2*nx_coarse) + 2*I + 1];
+
+	float min_h_t = fminf(h_tl,h_tr);
+	float min_h_b = fminf(h_bl,h_br);
+
+        h_coarse[idx] = fminf(min_h_t,min_h_b);
+    }
+}
+
 
 extern "C" __global__
 void prolongate_cell_centered(

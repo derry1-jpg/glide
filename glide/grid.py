@@ -1,22 +1,126 @@
-"""
-Grid hierarchy for multigrid ice sheet solver.
-
-Implements a MAC (marker-and-cell) staggered grid with:
-- u velocities on vertical faces: shape (ny, nx+1)
-- v velocities on horizontal faces: shape (ny+1, nx)
-- H thickness and other scalars on cell centers: shape (ny, nx)
-"""
-
+from dataclasses import dataclass, field, fields
 import cupy as cp
-from .kernels import make_physics_params
+from cupy.typing import NDArray
+from .field import Field, Constant
 
+@dataclass
+class State:
+    u: Field | None = None
+    v: Field | None = None
+    H: Field | None = None
+    H_prev: Field | None = None
+    grounded: Field | None = None
+    mask: Field | None = None
+
+    def __repr__(self):
+        return f'{self.u.compact_string}\n{self.v.compact_string}\n{self.H.compact_string}\n{self.H_prev.compact_string}\n{self.grounded.compact_string}\n{self.mask.compact_string}'
+
+@dataclass
+class AdjointState:
+    lambda_u: Field | None = None
+    lambda_v: Field | None = None
+    lambda_H: Field | None = None
+
+    def __repr__(self):
+        return f'{self.lambda_u.compact_string}\n{self.lambda_v.compact_string}\n{self.lambda_H.compact_string}'
+
+@dataclass
+class Geometry:
+    bed: Field | None = None
+    thklim: Constant = field(
+        default_factory=lambda: Constant(
+            value=cp.float32(0.1),
+            name='thklim',
+            units='m',
+            attrs={'long_name':'minimum thickness'})
+        )
+    sigmoid_c: Constant = field(
+        default_factory=lambda: Constant(
+            value=cp.float32(0.1),
+            name='sigmoid_c',
+            units='m^{-1}',
+            attrs={'long_name':("smoothing factor for sigmoidal \
+                                  grounding flag. Lower values \
+                                  imply a smoother transition from \
+                                  grounded to floating physics")})
+        )
+
+    def __repr__(self):
+        return f'{self.bed.compact_string}\n{self.thklim}\n{self.sigmoid_c}'
+
+@dataclass
+class Rheology:
+    B: Field | None = None
+    n: Constant = field(
+        default_factory = lambda: Constant(
+            value=cp.float32(3.0),
+            name='n',
+            units='',
+            attrs={'long_name':'Glens law n'})
+        )
+    eps_reg: Constant = field(
+        default_factory = lambda: Constant(
+            value=cp.float32(1e-6),
+            name='eps_reg',
+            units='s^{-2}',
+            attrs={'long_name':'Strain invariant squared regularizer'})
+        )
+    
+    def __repr__(self):
+        return f'{self.B.compact_string}\n{self.n}\n{self.eps_reg}'
+    
+@dataclass
+class Sliding:
+    beta: Field | None = None
+    m: Constant = field(
+        default_factory = lambda: Constant(
+            value=cp.float32(1.0),
+            name='m',
+            units='',
+            attrs={'long_name':'Weertman law m'})
+        )
+    u_reg: Constant = field(
+        default_factory = lambda: Constant(
+            value=cp.float32(1.0),
+            name='u_reg',
+            units='m a^{-1}',
+            attrs={'long_name':'Weertman law regularization'})
+        )
+    water_drag: Constant = field(
+        default_factory = lambda: Constant(
+            value=cp.float32(1e-5),
+            name='water_drag',
+            units='',
+            attrs={'long_name':'basal traction exerted by water'})
+        )
+    def __repr__(self):
+        return f'{self.beta.compact_string}\n{self.m}\n{self.u_reg}\n{self.water_drag}'
+
+@dataclass
+class Calving:
+    calving_rate: Constant = field(
+        default_factory = lambda: Constant(
+            value=cp.float32(0.0),
+            name='calving_rate',
+            units='m a^{-1}',
+            attrs={'long_name':"The speed at which ice \
+                        nonconservatively fluxes through \
+                        a facet when both cells are floating"})
+        )
+
+    def __repr__(self):
+        return f'{self.calving_rate}'
+
+@dataclass
+class Forcing:
+    smb: Field = None
+    
+    def __repr__(self):
+        return f'{self.smb.compact_string}'
 
 class Grid:
     """
     Single level of the multigrid hierarchy.
-
-    Manages state vectors, parameters, and kernel dispatch for one grid level.
-    Supports both forward simulation and adjoint-based inverse modeling.
 
     Parameters
     ----------
@@ -24,66 +128,173 @@ class Grid:
         Grid dimensions (number of cells in y and x)
     dx : float
         Grid spacing (assumed isotropic)
-    dt : float
-        Time step
-    kernels : module
-        Compiled CUDA kernel module
     parent : Grid, optional
         Parent (finer) grid in hierarchy
-    n : float
-        Glen's flow law exponent (default 3.0)
-    eps_reg : float
-        Strain rate regularization (default 1e-5)
-    water_drag : float
-        Drag coefficient for floating ice (default 0.001)
-    calving_rate : float
-        Calving rate for mass loss at margins (default 1.0)
+
+    Note: If any of the optional dataclasses are passed in,
+    the Fields and Constants contained therein are *not*
+    copied and will mutate if the original data is 
+    mutated externally.  This may or may not be 
+    desirable behavior.
     """
 
-    def __init__(self, ny, nx, dx, dt, kernels, parent=None,
-                 n=3.0, eps_reg=1e-5, 
-                 m=1.0, u_reg=1.0,
-                 water_drag=0.001, calving_rate=1.0,
-                 sigmoid_c=0.1):
+    def __init__(self, ny: int, nx: int, dx: cp.float32, 
+            parent = None,
+            state: State = None,
+            adjoint: AdjointState = None,
+            geometry: Geometry = None,
+            rheology: Rheology = None,
+            sliding: Sliding = None,
+            calving: Calving = None,
+            forcing: Forcing = None
+            ):
 
         self.parent = parent
         self.child = None
-        self.kernels = kernels
-
-        self.dx = cp.float32(dx)
-        self.dt = cp.float32(dt)
+        
         self.ny = ny
         self.nx = nx
+        
+        self.dx = cp.float32(dx)
 
         # Degrees of freedom
         self.nu = ny * (nx + 1)
         self.nv = (ny + 1) * nx
-        self.nU = self.nu + self.nv
         self.nh = ny * nx
         self.n_total = self.nu + self.nv + self.nh
 
-        # Physics parameters (passed to CUDA kernels as struct)
-        self._n = cp.float32(n)
-        self._eps_reg = cp.float32(eps_reg)
-        self._m = cp.float32(m)
-        self._u_reg = cp.float32(u_reg)
-        self._water_drag = cp.float32(water_drag)
-        self._calving_rate = cp.float32(calving_rate)
-        self._sigmoid_c = cp.float32(sigmoid_c)
+        self.state    = state    if state    is not None else self._allocate_state()
+        self.geometry = geometry if geometry is not None else self._allocate_geometry()
+        self.rheology = rheology if rheology is not None else self._allocate_rheology()
+        self.sliding  = sliding  if sliding  is not None else self._allocate_sliding()
+        self.calving  = calving  if calving  is not None else self._allocate_calving()
+        self.forcing  = forcing  if forcing  is not None else self._allocate_forcing()
+        
+        # Adjoint fields are initialized lazily
+        self._adjoint  = adjoint
 
-        # Allocate state and work arrays
-        self._allocate_arrays()
+    @property
+    def adjoint(self):
+        if self._adjoint is None:
+            self._adjoint = self._allocate_adjoint_state()
+        return self._adjoint
 
+    def _allocate_state(self):
+        u = Field(
+            data=cp.zeros((self.ny, self.nx+1),dtype=cp.float32),
+            name='u',
+            units='m a^{-1}',
+            attrs={'long_name':'x component of depth-averaged velocity'})
+        
+        v = Field(
+            data=cp.zeros((self.ny+1, self.nx),dtype=cp.float32),
+            name='v',
+            units='m a^{-1}',
+            attrs={'long_name':'y component of depth-averaged velocity'})
+
+        H = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='H',
+            units='m',
+            attrs={'long_name':'Ice thickness at t + dt (end of time step)'})
+        
+        H_prev = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='H_prev',
+            units='m',
+            attrs={'long_name':'Ice thickness at t (beginning of time step)'})
+
+        grounded = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='grounded',
+            units='',
+            attrs={'long_name':'Whether the ice is grounded. fraction in [0,1]'})
+
+        mask = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='mask',
+            units='',
+            attrs={'long_name':'''Active set mask - if unity, thickness is 
+                         set to thklim in Dirichlet BC fashion'''})
+
+        return State(u=u,v=v,H=H,H_prev=H_prev,grounded=grounded,mask=mask)
+
+    def _allocate_adjoint_state(self):
+        lambda_u = Field(
+            data=cp.zeros((self.ny, self.nx+1),dtype=cp.float32),
+            name='lambda_u',
+            units='varies with objective fn',
+            attrs={'long_name':'Adjoint variable for u'})
+
+        lambda_v = Field(
+            data=cp.zeros((self.ny+1, self.nx),dtype=cp.float32),
+            name='lambda_v',
+            units='varies with objective fn',
+            attrs={'long_name':'Adjoint variable for v'})
+
+        lambda_H = Field(cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='lambda_H',
+            units='varies with objective fn',
+            attrs={'long_name':'Adjoint variable for H'})
+
+        return AdjointState(lambda_u=lambda_u,lambda_v=lambda_v,lambda_H=lambda_H)
+
+    def _allocate_geometry(self):
+        bed = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='bed',
+            units='m',
+            attrs={'long_name':'bed elevation (not necessarily the ice base)'})
+        return Geometry(bed=bed)
+
+    def _allocate_rheology(self):
+        B = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='B',
+            units='m',
+            attrs={'long_name':'Rheologic prefactor.  B=A^{-1/n}'})
+
+        return Rheology(B=B)
+
+    def _allocate_sliding(self):
+        beta = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='beta',
+            units='?',
+            attrs={'long_name':'Basal sliding coefficient'})
+
+        return Sliding(beta=beta)
+
+    def _allocate_calving(self):
+        return Calving()
+    
+    def _allocate_forcing(self):
+        smb = Field(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            name='smb',
+            units='m a^{-1}',
+            attrs={'long_name':'Surface mass balance'})
+
+        return Forcing(smb=smb)
+
+    def spawn_child(self):
+        child = Grid(
+            self.ny // 2, self.nx // 2,
+            self.dx * 2, parent=self
+        )
+        self.child = child
+        return child
+
+"""
     def _allocate_arrays(self):
-        """Allocate GPU arrays for state, residuals, and work vectors."""
         ny, nx = self.ny, self.nx
 
         # Previous thickness (for time stepping)
-        self.H_prev = cp.zeros((ny, nx), dtype=cp.float32)
+        ## self.H_prev = cp.zeros((ny, nx), dtype=cp.float32)
 
         # Primary state vector [u, v, H]
-        self.U = cp.zeros(self.n_total, dtype=cp.float32)
-        self.u, self.v, self.H = self._vec_to_fields(self.U)
+        ## self.U = cp.zeros(self.n_total, dtype=cp.float32)
+        ## self.u, self.v, self.H = self._vec_to_fields(self.U)
 
         # Perturbation vector (for JVP)
         self.d_U = cp.zeros(self.n_total, dtype=cp.float32)
@@ -94,8 +305,8 @@ class Grid:
         self.delta_u, self.delta_v, self.delta_H = self._vec_to_fields(self.delta_U)
 
         # Adjoint state vector
-        self.Lambda = cp.zeros(self.n_total, dtype=cp.float32)
-        self.lambda_u, self.lambda_v, self.lambda_H = self._vec_to_fields(self.Lambda)
+        ## self.Lambda = cp.zeros(self.n_total, dtype=cp.float32)
+        ## self.lambda_u, self.lambda_v, self.lambda_H = self._vec_to_fields(self.Lambda)
         
         self.Lambda_0 = cp.zeros(self.n_total, dtype=cp.float32)
         self.lambda_u_0, self.lambda_v_0, self.lambda_H_0 = self._vec_to_fields(self.Lambda_0)
@@ -154,44 +365,19 @@ class Grid:
         self.phi = cp.zeros((ny, nx), dtype=cp.float32)
 
         # Physical parameters (cell-centered)
-        self.bed = cp.zeros((ny, nx), dtype=cp.float32)
-        self.beta = cp.zeros((ny, nx), dtype=cp.float32)
+        ## self.bed = cp.zeros((ny, nx), dtype=cp.float32)
+        ## self.beta = cp.zeros((ny, nx), dtype=cp.float32)
         self.grad_beta = cp.zeros((ny,nx),dtype=cp.float32)
-        self.B = cp.zeros((ny, nx), dtype=cp.float32)
-        self.smb = cp.zeros((ny, nx), dtype=cp.float32)
-        self.mask = cp.zeros((ny, nx), dtype=cp.float32)
+        ## self.B = cp.zeros((ny, nx), dtype=cp.float32)
+        ## self.smb = cp.zeros((ny, nx), dtype=cp.float32)
+        ## self.mask = cp.zeros((ny, nx), dtype=cp.float32)
         self.error_mask = cp.zeros((ny, nx), dtype=cp.float32)
         self.error_mask.fill(1)
         self.gamma = cp.zeros((ny, nx), dtype=cp.float32)
-        self.grounded = cp.zeros((ny,nx),dtype=cp.float32)
+        ## self.grounded = cp.zeros((ny,nx),dtype=cp.float32)
 
-    def _vec_to_fields(self, x):
-        """Create field views into a monolithic state vector."""
-        u = x[:self.nu].reshape(self.ny, self.nx + 1)
-        v = x[self.nu:self.nU].reshape(self.ny + 1, self.nx)
-        H = x[self.nU:].reshape(self.ny, self.nx)
-        return u, v, H
-
-    def spawn_child(self):
-        """Create a coarser child grid (2x coarsening)."""
-        child = Grid(
-            self.ny // 2, self.nx // 2,
-            self.dx * 2, self.dt,
-            self.kernels,
-            parent=self,
-            n=self._n,
-            eps_reg=self._eps_reg,
-            m=self._m,
-            u_reg=self._u_reg,
-            water_drag=self._water_drag,
-            calving_rate=self._calving_rate,
-            sigmoid_c=self._sigmoid_c
-        )
-        self.child = child
-        return child
 
     def _kernel_config(self):
-        """Return (grid_size, block_size, stride, halo) for kernels."""
         block_size = (16, 16)
         stride = 14
         halo = 1
@@ -199,7 +385,6 @@ class Grid:
         return grid_size, block_size, stride, halo
 
     def compute_residual(self, use_mask=True, enable_calving=True, recompute_grounded=True):
-        """Compute residual r = f - F(U)."""
         kernel = self.kernels.ice.get_function('compute_residual')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -229,10 +414,7 @@ class Grid:
                 self.dx, self.dt,
                 self.ny, self.nx, stride, halo))
 
-
-
     def compute_F(self, use_mask=True, enable_calving=True, recompute_grounded=True):
-        """Compute F(U) (operator evaluation without RHS)."""
         kernel = self.kernels.ice.get_function('compute_residual')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -264,7 +446,6 @@ class Grid:
                 self.ny, self.nx, stride, halo))
 
     def compute_jvp(self, use_mask=True, enable_calving=True, recompute_grounded=True):
-        """Compute Jacobian-vector product J @ d_U."""
         kernel = self.kernels.ice.get_function('compute_jvp')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -307,7 +488,6 @@ class Grid:
         self.F_adj[:] = -self.l
 
     def compute_vjp(self,use_mask=True,enable_calving=True,recompute_grounded=False):
-        """Compute vector-Jacobian product Lambda^T @ J."""
         kernel = self.kernels.ice.get_function('compute_vjp')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -339,7 +519,6 @@ class Grid:
                 self.ny, self.nx, stride, halo))
 
     def vanka_smooth(self, n_inner=1, enable_calving=True, recompute_grounded=True, relax_grounded=cp.float32(0.5)):
-        """Apply one Vanka smoother pass (red-black)."""
         kernel = self.kernels.ice.get_function('vanka_smooth')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -366,7 +545,6 @@ class Grid:
                 n_inner))
 
     def vanka_smooth_adjoint(self, use_mask=True, enable_calving=True, recompute_grounded=False):
-        """Apply adjoint Vanka smoother pass."""
         kernel = self.kernels.ice.get_function('vanka_smooth_adjoint')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -399,7 +577,6 @@ class Grid:
                 ))
 
     def vanka_sweep(self, n_iter, verbose=False,n_inner=30, omega=cp.float32(0.5),enable_calving=True,recompute_grounded=True):
-        """Perform n_iter red-black Vanka smoothing sweeps."""
 
         for _ in range(n_iter):
             self.vanka_smooth(n_inner=n_inner,enable_calving=enable_calving,recompute_grounded=recompute_grounded)
@@ -411,7 +588,6 @@ class Grid:
                       cp.linalg.norm(self.r_H))
 
     def vanka_sweep_adjoint(self, n_iter, verbose=True,omega=cp.float32(0.5), use_mask=True, enable_calving=True):
-        """Perform n_iter adjoint Vanka smoothing sweeps."""
         for _ in range(n_iter):
             self.compute_residual_adjoint(use_mask=use_mask,enable_calving=enable_calving)
             self.vanka_smooth_adjoint(use_mask=use_mask,enable_calving=enable_calving)
@@ -420,7 +596,6 @@ class Grid:
             print(self.dx,cp.linalg.norm(self.r_adj),cp.linalg.norm(self.r_adj_u),cp.linalg.norm(self.r_adj_v),cp.linalg.norm(self.r_adj_H))
 
     def compute_grad_beta(self):
-        """Compute gradient of objective w.r.t. beta via adjoint."""
         kernel = self.kernels.ice.get_function('compute_grad_beta')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -456,7 +631,6 @@ class Grid:
         self.f_H[:,:] = self.H_prev/self.dt + self.smb
 
     def vanka_dump(self, enable_calving=True):
-        """Apply one Vanka smoother pass (red-black)."""
         kernel = self.kernels.ice.get_function('vanka_dump')
         grid_size, block_size, stride, halo = self._kernel_config()
 
@@ -482,3 +656,4 @@ class Grid:
                 ))
 
         return J,r
+"""

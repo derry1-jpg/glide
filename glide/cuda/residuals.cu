@@ -11,14 +11,15 @@ void compute_residual(
     const float* __restrict__ v,
     const float* __restrict__ H,
     const float* __restrict__ phi,
+    const float* __restrict__ mask,
     const float* __restrict__ f_u,
     const float* __restrict__ f_v,
     const float* __restrict__ f_H,
     const float* __restrict__ bed,
     const float* __restrict__ B,
     const float* __restrict__ beta,
-    const float* __restrict__ mask,
     const float* __restrict__ gamma,
+    bool use_forcing, bool use_mask,
     float n, float eps_reg, float flotation_reg_driving,
     float m, float u_reg, float water_drag, float flotation_reg_sliding,     
     float calving_rate, float flotation_reg_calving,
@@ -35,9 +36,7 @@ void compute_residual(
     int i = blockIdx.y * stride + (threadIdx.y - halo);
 
     __shared__ float eta_local[bny][bnx];
-    //__shared__ float grounded_local[bny][bnx];
 
-    //populate_grounded(grounded_local, bi, bj, i, j, H, bed, sigmoid_c, ny, nx);
     if (i > ny || j > nx) return;
 
     populate_viscosity(eta_local, bi, bj, i, j, u, v, B, n, eps_reg, dx, ny, nx);
@@ -56,18 +55,16 @@ void compute_residual(
 	if (has_cell){
 
 	    float H_c        = get_cell(H,i,j,ny,nx);
-	    //float grounded_c = grounded_local[bi][bj];
 	    float phi_c = get_cell(phi,i,j,ny,nx);
-	    float f_H_c      = get_cell(f_H,i,j,ny,nx);
 
-	    float rH = H_c/dt - f_H_c;
+	    float rH = H_c/dt;
+            if (use_forcing) rH -= get_cell(f_H,i,j,ny,nx);
 
 	    float H_l = get_cell(H,i,j-1,ny,nx);
 	    float u_l = get_vfacet(u,i,j,ny,nx);
 	    HorizontalFluxJacobian j_l = get_horizontal_flux_jac({u_l,H_l,H_c}, i, j, ny, nx);
 	    rH -= j_l.res*dx_inv;
 	    
-	    //float grounded_l = grounded_local[bi][bj-1];
 	    float phi_l = get_cell(phi,i,j-1,ny,nx);
 	    FacetCalvingJacobian j_calve_l = get_facet_calving_jac({H_c,H_l,phi_c,phi_l,calving_rate,flotation_reg_calving},i,j,ny,nx);
 	    rH += j_calve_l.res*dx_inv;
@@ -77,7 +74,6 @@ void compute_residual(
 	    HorizontalFluxJacobian j_r = get_horizontal_flux_jac({u_r,H_c,H_r}, i, j + 1, ny, nx);
             rH += j_r.res*dx_inv;
 	    
-	    //float grounded_r = grounded_local[bi][bj+1];
 	    float phi_r = get_cell(phi,i,j+1,ny,nx);
 	    FacetCalvingJacobian j_calve_r = get_facet_calving_jac({H_c,H_r,phi_c,phi_r,calving_rate,flotation_reg_calving},i,j+1,ny,nx);
 	    rH += j_calve_r.res*dx_inv;
@@ -87,7 +83,6 @@ void compute_residual(
 	    VerticalFluxJacobian j_t = get_vertical_flux_jac({v_t,H_t,H_c}, i, j, ny, nx);
 	    rH += j_t.res*dx_inv;
 
-	    //float grounded_t = grounded_local[bi-1][bj];
 	    float phi_t = get_cell(phi,i-1,j,ny,nx);
 	    FacetCalvingJacobian j_calve_t = get_facet_calving_jac({H_c,H_t,phi_c,phi_t,calving_rate,flotation_reg_calving},i,j,ny,nx);
 	    rH += j_calve_t.res*dx_inv;
@@ -99,12 +94,11 @@ void compute_residual(
             rH -= j_b.res*dx_inv;
 
 
-	    //float grounded_b = grounded_local[bi+1][bj];
 	    float phi_b = get_cell(phi,i+1,j,ny,nx);
 	    FacetCalvingJacobian j_calve_b = get_facet_calving_jac({H_c,H_b,phi_c,phi_b,calving_rate,flotation_reg_calving},i+1,j,ny,nx);
 	    rH += j_calve_b.res*dx_inv;
 
-	    float masked = get_cell(mask,i,j,ny,nx);
+	    float masked = use_mask ? get_cell(mask,i,j,ny,nx) : 0.0f;
 	    float thklim = get_cell(gamma,i,j,ny,nx);
             r_H[i * nx + j] = (1.0f - masked) * rH + masked * (H_c - thklim);
 	}
@@ -114,8 +108,8 @@ void compute_residual(
 	
 	if (has_u){
 
-	    float f_u_l = get_vfacet(f_u,i,j,ny,nx);
-	    float ru_l = -f_u_l;
+	    float ru_l = 0.0f;
+	    if (use_forcing) ru_l -= get_vfacet(f_u,i,j,ny,nx);
 
 	    {
 	    float eta_c = eta_local[bi][bj];
@@ -199,8 +193,6 @@ void compute_residual(
 
 	    float H_l    = get_cell(H,i,j-1,ny,nx);
 	    float H_c    = get_cell(H,i,j,ny,nx);
-            //float grounded_l = grounded_local[bi][bj-1];
-            //float grounded_c = grounded_local[bi][bj];
 	    float phi_l = get_cell(phi,i,j-1,ny,nx);
 	    float phi_c = get_cell(phi,i,j,ny,nx);
 	    float beta_l = get_cell(beta,i,j-1,ny,nx);
@@ -214,8 +206,6 @@ void compute_residual(
 	    float H_c    = get_cell(H,i,j,ny,nx);
 	    float bed_l  = get_cell(bed,i,j-1,ny,nx);
 	    float bed_c  = get_cell(bed,i,j,ny,nx);
-            //float grounded_l = grounded_local[bi][bj-1];
-            //float grounded_c = grounded_local[bi][bj];
 	    float phi_l = get_cell(phi,i,j-1,ny,nx);
 	    float phi_c = get_cell(phi,i,j,ny,nx);
 	    TauDxJacobian tau_dx = get_tau_dx_jac({H_l,H_c,bed_l,bed_c,phi_l,phi_c,flotation_reg_driving},dx_inv,i,j,ny,nx);
@@ -230,8 +220,8 @@ void compute_residual(
 
 	if (has_v){
 
-	    float f_v_t = get_hfacet(f_v,i,j,ny,nx);
-	    float rv_t = -f_v_t;
+	    float rv_t = 0.0f;
+	    if (use_forcing) rv_t -= get_hfacet(f_v,i,j,ny,nx);
 
 	    {
 	    float eta_t = eta_local[bi - 1][bj];
@@ -312,8 +302,6 @@ void compute_residual(
 
 	    float H_t    = get_cell(H,i-1,j,ny,nx);
 	    float H_c    = get_cell(H,i,j,ny,nx);
-            //float grounded_t = grounded_local[bi-1][bj];
-            //float grounded_c = grounded_local[bi][bj];
 	    float phi_t = get_cell(phi,i-1,j,ny,nx);
 	    float phi_c = get_cell(phi,i,j,ny,nx);
 	    float beta_t = get_cell(beta,i-1,j,ny,nx);
@@ -328,8 +316,6 @@ void compute_residual(
 	    float H_c    = get_cell(H,i,j,ny,nx);
 	    float bed_t = get_cell(bed,i-1,j,ny,nx);
 	    float bed_c = get_cell(bed,i,j,ny,nx);
-            //float grounded_t = grounded_local[bi-1][bj];
-            //float grounded_c = grounded_local[bi][bj];
 	    float phi_t = get_cell(phi,i-1,j,ny,nx);
 	    float phi_c = get_cell(phi,i,j,ny,nx);
 

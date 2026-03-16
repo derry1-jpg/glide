@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, fields
 import cupy as cp
 from cupy.typing import NDArray
-from .field import Field, Constant
+from .field import Field, SubgridField, Constant
 from .operators import ForwardOperators
 
 @dataclass
@@ -27,7 +27,7 @@ class AdjointState:
 
 @dataclass
 class Geometry:
-    bed: Field | None = None
+    bed: SubgridField | None = None
     thklim: Constant = field(
         default_factory=lambda: Constant(
             value=cp.float32(0.1),
@@ -274,7 +274,7 @@ class Grid:
         return AdjointState(lambda_u=lambda_u,lambda_v=lambda_v,lambda_H=lambda_H)
 
     def _allocate_geometry(self):
-        bed = Field(
+        bed = SubgridField(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
             name='bed',
             units='m',

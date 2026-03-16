@@ -111,6 +111,32 @@ void restrict_cell_min(
     }
 }
 
+extern "C" __global__
+void restrict_cell_var(
+    const float* f_fine,      // (ny_fine, nx_fine)
+    float* v_coarse,          // (ny_coarse, nx_coarse)
+    const int ny_coarse,
+    const int nx_coarse)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    if (idx < ny_coarse * nx_coarse) {
+        int J = idx / nx_coarse;
+        int I = idx % nx_coarse;
+        
+        float mean = 0.25f * (f_fine[2*J * (2*nx_coarse) + 2*I] +
+                                 f_fine[2*J * (2*nx_coarse) + 2*I + 1] +
+                                 f_fine[(2*J + 1) * (2*nx_coarse) + 2*I] +
+                                 f_fine[(2*J + 1) * (2*nx_coarse) + 2*I + 1]);
+
+	float d1 = f_fine[2*J * (2*nx_coarse) + 2*I] - mean;
+        float d2 = f_fine[2*J * (2*nx_coarse) + 2*I + 1] - mean;
+        float d3 = f_fine[(2*J + 1) * (2*nx_coarse) + 2*I] - mean; 
+	float d4 = f_fine[(2*J + 1) * (2*nx_coarse) + 2*I + 1] - mean;
+
+        v_coarse[idx] = 0.25f * (d1*d1 + d2*d2 + d3*d3 + d4*d4);
+    }
+}
 
 extern "C" __global__
 void prolongate_vfacet_injection(

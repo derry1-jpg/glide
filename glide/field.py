@@ -74,3 +74,7 @@ class Constant:
         string = f'Constant: {self.name}, {self.value:.3f}, {self.units}'
         return string
 
+
+@dataclass
+class SubgridField(Field):
+    quantiles: Any | None = None

@@ -560,11 +560,11 @@ void vanka_smooth(
 	    r[3] -= get_hfacet(f_v,i+1,j,ny,nx);
 	    r[4] -= get_hfacet(f_H,i,j,ny,nx);
 
-            J[0]  -= 0.01f;//ssa_damping;
-            J[6]  -= 0.01f;//ssa_damping;
-            J[12] -= 0.01f;//ssa_damping;
-            J[18] -= 0.01f;//ssa_damping;
-            J[24] += 1.0f;//mc_damping;
+            J[0]  -= ssa_damping;
+            J[6]  -= ssa_damping;
+            J[12] -= ssa_damping;
+            J[18] -= ssa_damping;
+            J[24] += mc_damping;
 	     
 	    if (j == 0) {
 	    	for(int k=0; k<5; ++k) J[0 + k] = 0.0f;

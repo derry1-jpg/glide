@@ -22,6 +22,7 @@ from glide.data import (
 
 from glide.multigrid import Multigrid, FASCDSolver
 from scipy.ndimage import gaussian_filter
+from glide.closure import build_blurred_quantile_pyramid
 
 # =============================================================================
 # Configuration - modify these paths and parameters
@@ -30,9 +31,9 @@ from scipy.ndimage import gaussian_filter
 OUTPUT_DIR = "./output_fmg"
 
 SKIP = 6           # Geometry downsampling factor
-DT = 20.0          # Time step (years)
+DT = 25.0          # Time step (years)
 N_STEPS = 50      # Number of time steps
-N_LEVELS = 5       # Multigrid levels
+N_LEVELS = 6       # Multigrid levels
 N_VCYCLES = 20      # V-cycles per time step
 
 # Physical constants
@@ -88,7 +89,7 @@ thickness = gaussian_filter(thickness,1)
 beta = dataset.beta.values
 beta.fill(2.5)
 smb = dataset.smb.values
-smb += 1
+smb -= 1.0
 BETA_PATH = "./inverse_output/beta_level_0.p"
 beta = cp.array(pickle.load(open(BETA_PATH, 'rb')))
 #beta[beta>5] = 5
@@ -114,12 +115,22 @@ grid.sliding.beta.set(beta)
 
 grid.sliding.m.set(1./3.)
 grid.calving.calving_rate.set(2000.0)
-grid.rheology.eps_reg.set(1e-5)
+grid.rheology.eps_reg.set(1e-6)
 grid.sliding.water_drag.set(1e-5)
 
-dt = cp.float32(25.0)
+dt = cp.float32(DT)
 mg = Multigrid(grid)
-mg.create_grid_hierarchy(6)
+mg.create_grid_hierarchy(N_LEVELS)
+
+"""
+bed_quantiles =  build_blurred_quantile_pyramid(
+    grid.geometry.bed.data,N_LEVELS-1,
+    sigma_sub=cp.float32(10.0),m=64,
+    trim=False,seed=0)
+
+for i in range(N_LEVELS):
+    mg.grids[i].geometry.bed.quantiles = bed_quantiles[i]
+"""
 
 class VankaLogger:
     def __init__(self,grid,level,write=False):
@@ -189,21 +200,13 @@ H0 = cp.array(grid.state.H.data)
 grid.forward_operators.set_rhs(dt)
 grid.forward_operators.compute_phi()
 #grid.forward_operators.vanka_config.hook_func = VankaLogger(grid,0)
-#grid.forward_operators.vanka_smooth(dt,recompute_phi=False)
-#grid.forward_operators.vanka_sweep(dt,100,recompute_phi=False)
-
-
-
-
-#J,r = grid.forward_operators.vanka_dump(dt)
-
 
 solver = FASCDSolver(mg)
+solver.config.use_tau_correction_for_coarse_calving = True
 solver.config.coarse_steps = 200
 solver.config.pre_steps = 10
-solver.config.post_steps = 20
-solver.config.finest_steps = 200
-
+solver.config.post_steps = 150
+solver.config.finest_steps = 0
 
 t = 0.0
 n_steps = 25
@@ -211,7 +214,7 @@ writer = VTIWriter(OUTPUT_DIR, base="greenland", dx=dx)
 logger = TimeLogger(grid)
 for step in range(n_steps):
     print(t)
-    solver.solve(dt,max_iter=10,rel_tol=1e-4,abs_tol=10)
+    solver.solve(dt,max_iter=10,rel_tol=1e-3,abs_tol=10)
     grid.state.H_prev.data[:,:] = grid.state.H.data[:,:]
     t += dt
 

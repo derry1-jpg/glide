@@ -137,6 +137,8 @@ class Multigrid:
             kernel = self.kernels.get_function('restrict_cell_max')
         elif method == 'min':
             kernel = self.kernels.get_function('restrict_cell_min')
+        elif method == 'var':
+            kernel = self.kernels.get_function('restrict_cell_var')
         else:
             raise TypeError('Valid restriction methods: [avg,max,min]')
 
@@ -257,6 +259,8 @@ class FASCDLevel:
 
 @dataclass
 class FASCDConfig:
+    freeze_coarse_calving: bool = True
+    freeze_coarse_phi: bool = True
     coarsest_steps: int = 200
     pre_steps: int = 10
     post_steps: int = 20
@@ -298,7 +302,7 @@ class FASCDSolver:
         ----------
         l : Current grid level
         """
-        finest = l == 0
+        coarse = l > 0
         mg = self.multigrid
         dt = self.dt
         level = self.levels[l]
@@ -312,7 +316,7 @@ class FASCDSolver:
         if l == self.n_levels - 1:
             # Coarsest level: direct solve
             level.grid.forward_operators.gamma[:,:] = level.scratch.w_H[:,:] + level.scratch.chi[:,:]
-            level.grid.forward_operators.vanka_sweep(self.dt,self.config.coarsest_steps,recompute_phi=False)
+            level.grid.forward_operators.vanka_sweep(self.dt,self.config.coarsest_steps,freeze_calving=self.config.freeze_coarse_calving,freeze_phi=self.config.freeze_coarse_phi)
             level.grid.forward_operators.gamma.fill(level.grid.geometry.thklim.value)
             return
 
@@ -327,7 +331,10 @@ class FASCDSolver:
 
         # Pre-smooth with local constraint
         level.grid.forward_operators.gamma[:, :] = level.scratch.w_H + level.scratch.phi
-        level.grid.forward_operators.vanka_sweep(self.dt,self.config.pre_steps,recompute_phi=finest)
+        level.grid.forward_operators.vanka_sweep(self.dt,self.config.pre_steps,
+            freeze_phi=coarse and self.config.freeze_coarse_phi,
+            freeze_calving=coarse and self.config.freeze_coarse_calving
+            )
         level.grid.forward_operators.gamma.fill(level.grid.geometry.thklim.value)
 
         # Compute coarse grid correction
@@ -342,11 +349,17 @@ class FASCDSolver:
         next_level.scratch.w_H[:,:] = next_level.grid.state.H.data[:,:]
 
         # Compute and restrict residual
-        level.grid.forward_operators.compute_residual(dt, use_mask=False,enable_calving=False,recompute_phi=False)
+        level.grid.forward_operators.compute_residual(dt, use_mask=False, 
+            freeze_phi=coarse and self.config.freeze_coarse_phi,
+            freeze_calving=coarse and self.config.freeze_coarse_calving
+            )
         mg.restrict_residual(level.grid,next_level.grid)
 
         # Form coarse grid RHS: f_c = F_c(I_h^H u_h) - I_h^H r_h
-        next_level.grid.forward_operators.compute_residual(dt, use_mask=False,enable_calving=False,recompute_phi=False,compute_F=True)
+        next_level.grid.forward_operators.compute_residual(dt, use_mask=False, operator_only=True, 
+            freeze_phi=self.config.freeze_coarse_phi,
+            freeze_calving=self.config.freeze_coarse_calving
+            )
 
         next_level.grid.forward_operators.f_u[:,:] = next_level.grid.forward_operators.F_u[:,:] - next_level.grid.forward_operators.r_u[:,:]
         next_level.grid.forward_operators.f_v[:,:] = next_level.grid.forward_operators.F_v[:,:] - next_level.grid.forward_operators.r_v[:,:]
@@ -374,13 +387,19 @@ class FASCDSolver:
         level.grid.state.v.data[:,:] = level.scratch.w_v + level.scratch.z_v
         level.grid.state.H.data[:,:] = level.scratch.w_H + level.scratch.z_H
 
+        print(l,coarse,self.config.freeze_coarse_calving)
         # Post-smooth
         level.grid.forward_operators.gamma[:, :] = level.scratch.w_H + level.scratch.chi
-        level.grid.forward_operators.vanka_sweep(self.dt,self.config.post_steps,recompute_phi=finest)
+        level.grid.forward_operators.vanka_sweep(self.dt,self.config.post_steps,
+            freeze_phi=coarse and self.config.freeze_coarse_phi,
+            freeze_calving=coarse and self.config.freeze_coarse_calving
+            )
         level.grid.forward_operators.gamma.fill(level.grid.geometry.thklim.value)
 
-        if finest:
-            level.grid.forward_operators.vanka_sweep(self.dt,self.config.finest_steps,recompute_phi=True)
+        if not coarse:
+            level.grid.forward_operators.vanka_sweep(self.dt,self.config.finest_steps,
+                freeze_phi=False,freeze_calving=False
+                )
 
 """
     def adjoint_vcycle_fas(grid,

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field, fields
 import cupy as cp
+import xarray as xr
 from cupy.typing import NDArray
 from .field import Field, SubgridField, Constant, GridEntity
 from .operators import ForwardOperators, AdjointOperators
@@ -164,7 +165,9 @@ class Grid:
     """
 
     def __init__(self, ny: int, nx: int, dx: cp.float32,
-            x0: cp.float32=0.0, y0: cp.float32=0.0, crs=None, 
+            x0: cp.float32=cp.float32(0.0), 
+            y0: cp.float32=cp.float32(0.0), 
+            crs=None, 
             parent = None,
             state: State = None,
             adjoint: AdjointState = None,
@@ -183,8 +186,8 @@ class Grid:
         
         self.dx = cp.float32(dx)
 
-        self.x0 = x0
-        self.y0 = y0
+        self.x0 = cp.float32(x0)
+        self.y0 = cp.float32(y0)
         self.crs = crs
 
         self.x_cell = cp.arange(x0,x0 + dx*nx, dx)
@@ -376,3 +379,21 @@ class Grid:
         self.child = child
         return child
 
+    def to_dataset(self,
+            fields: dict[str, Field] | None = None,
+            *,
+            attrs: dict | None = None):
+    
+        data_vars = {name: fld.to_dataarray() for name,fld in fields.items()}
+        ds = xr.Dataset(data_vars=data_vars)
+        ds.attrs['dx'] = self.dx
+        ds.attrs['crs'] = str(self.crs)
+        ds.attrs["spatial_ref"] = self.crs.to_wkt()
+        ds.attrs["crs_wkt"] = self.crs.to_wkt()        
+
+        if attrs:
+            ds.attrs.update(attrs)
+
+        return ds
+        
+  

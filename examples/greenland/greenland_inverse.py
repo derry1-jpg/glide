@@ -8,6 +8,7 @@ below to match your setup.
 import cupy as cp
 import numpy as np
 import torch
+import pyproj
 
 #from glide import IcePhysics
 from glide.io import VTIWriter, write_vti
@@ -17,9 +18,6 @@ from glide.model import IceDynamics
 from scipy.ndimage import gaussian_filter
 from glide.hooks import InverseLogger
 from glide.torch import GlideStep
-import pyproj
-
-
 
 ### Load a dataset (here a preprocessed greenland dataset)
 dataset = load_greenland_preprocessed()
@@ -54,14 +52,8 @@ mg.rheology.eps_reg.set(1e-6)
 mg.rheology.n.set(3.0)
 
 ### Initialize sliding
-BETA_PATH = None
-#BETA_PATH = "./inverse_output/beta_level_0.p"
-if BETA_PATH:
-    import pickle
-    beta = cp.array(pickle.load(open(BETA_PATH, 'rb')))
-else:
-    beta = cp.zeros((ny,nx), dtype=cp.float32)
-    beta.fill(2.5)
+beta = cp.zeros((ny,nx), dtype=cp.float32)
+beta.fill(2.5)
 
 mg.sliding.beta.set(beta)
 mg.sliding.m.set(1./3.)
@@ -78,7 +70,7 @@ mg.forcing.smb.set(smb)
 u_obs = cp.array(dataset.vx.values,dtype=cp.float32)
 v_obs = cp.array(dataset.vy.values,dtype=cp.float32)
 
-# Buil
+# Build hierarchy of observations
 observation_levels = [(u_obs,v_obs)]
 for j in range(1,n_levels):
     u_obs_coarse = mg.restrict_cell(observation_levels[-1][0])
@@ -95,8 +87,10 @@ model.forward_solver.fas_options.set(
 model.adjoint_solver.fas_options.set(
         coarsest_steps=200, pre_steps=10,
         post_steps=150, finest_steps=0,
-        relative_tolerance=1e-2, absolute_tolerance=1e-5,
-        report_norms=False)
+        relative_tolerance=1e-2, absolute_tolerance=1e-5, # Note that adjoint var
+        report_norms=False)                               # adjoint var is small 
+                                                          # in magnitude
+
 
 # Thin Pytorch wrapper of a single glide time step
 glide_step = GlideStep.apply
@@ -110,7 +104,7 @@ log_beta = torch.log(torch.tensor(mg[coarsest_level].sliding.beta.data,device='c
 
 # Solve the inverse problem at progressively coarser levels
 for level in range(coarsest_level,-1,-1):
-    logger = InverseLogger(mg.levels[level],pvd_directory='./inverse/',pvd_base=f'level_{level}')
+    # Examples of different writing utilities - First writes to vti/pvd
 
     # This is what we're optimizing - Convert from the initial guess, 
     # either defined above or by prolongation from the coarser state
@@ -127,6 +121,14 @@ for level in range(coarsest_level,-1,-1):
 
     # Standard torch optimization loop (RMSprop works very well here)
     optimizer = torch.optim.RMSprop([log_beta],lr=1e-2)
+    
+    vti_writer = VTIWriter(f'inverse/level_{level}/vti', base='greenland', dx=mg[level].dx,
+            static_fields={'U_obs':[u_obs,v_obs]},
+            dynamic_fields={'beta':mg[level].sliding.beta,
+                            'U':[mg[level].state.u, mg[level].state.v]}
+        )
+
+    vti_writer.initialize(mg[level])
     for j in range(n_level_epochs):
         optimizer.zero_grad()
 
@@ -168,8 +170,12 @@ for level in range(coarsest_level,-1,-1):
         optimizer.step()
         
         print(f"Level {level}, Iter. {j}/{n_level_epochs} | J: {J.item():.2f}, J_data: {J_data.item():.2f}, J_L1: {J_L1.item():.2f}, J_L2: {J_L2.item():.2f}")
-        logger(j)
+        vti_writer.append(mg[level],time=j)
+        vti_writer.write_pvd()
 
     if level>0:
         log_beta = torch.tensor(mg.prolongate_cell(cp.asarray(log_beta.detach()),method='bilinear'))
+
+    beta_xr = mg[level].sliding.beta.to_dataarray()
+    beta_xr.to_netcdf(f'./inverse/level_{level}/beta_opt.nc')
 

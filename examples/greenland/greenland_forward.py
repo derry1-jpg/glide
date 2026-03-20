@@ -6,13 +6,14 @@ below to match your setup.
 """
 import cupy as cp
 import numpy as np
+import pyproj
 
 from glide.io import VTIWriter, write_vti
 from glide.data import load_greenland_preprocessed
 
 from glide.model import IceDynamics
 from scipy.ndimage import gaussian_filter
-from glide.hooks import TimeLogger
+from glide.io import ZarrWriter, VTIWriter
 
 ### Load a dataset (here a preprocessed greenland dataset)
 dataset = load_greenland_preprocessed()
@@ -20,8 +21,9 @@ dataset = load_greenland_preprocessed()
 ### Initialize grid
 # ny and nx must both divide by 2^(n_levels - 1) cleanly!
 ny,nx,dx = dataset.ny,dataset.nx,dataset.dx
-model = IceDynamics(n_levels=6,ny=ny,nx=nx,dx=dx)
-
+model = IceDynamics(n_levels=6,ny=ny,nx=nx,dx=dx,
+        x0=dataset.x[0].item(),y0=dataset.y[0].item(),
+        crs=pyproj.CRS("EPSG:3413"))
 mg = model.mg
 
 ### Initialize state
@@ -44,10 +46,10 @@ mg.rheology.n.set(3.0)
 
 ### Initialize sliding
 #BETA_PATH = None
-BETA_PATH = "./inverse_output/beta_level_0.p"
+BETA_PATH = "./inverse/level_0/beta_opt.nc"
 if BETA_PATH:
-    import pickle
-    beta = cp.array(pickle.load(open(BETA_PATH, 'rb')))
+    import xarray as xr
+    beta = cp.array(xr.load_dataarray(BETA_PATH))
 else:
     beta = cp.zeros((ny,nx), dtype=cp.float32)
     beta.fill(2.5)
@@ -57,39 +59,54 @@ mg.sliding.m.set(1./3.)
 mg.sliding.water_drag.set(1e-4)
 
 ### Initialize calving
-mg.calving.calving_rate.set(2000.0)
+# Specifies calving velocity for a non-conservative
+# calving flux over facets between adjacent floating cells
+mg.calving.calving_rate.set(2000.0) 
 
 ### Initialize forcing
 smb = dataset.smb.values
-#smb += -1.0
+smb += -1.0
 mg.forcing.smb.set(smb)
 
-### Initialize solver
-solver = model.forward_solver
+### Set multigrid solver parameters ###
+model.forward_solver.fas_options.set(
+        coarsest_steps=200, pre_steps=10, 
+        post_steps=150, finest_steps=0,
+        relative_tolerance=1e-2, absolute_tolerance=10.0,
+        report_norms=True)
 
-solver.vanka_options.omega.set(0.5)
-solver.vanka_options.newton_options.relaxation.set(0.5)
-solver.vanka_options.newton_options.steps.set(30)
 
-solver.fas_options.coarsest_steps.set(200)
-solver.fas_options.pre_steps.set(10)
-solver.fas_options.post_steps.set(50)
-solver.fas_options.finest_steps.set(150)
-solver.fas_options.maximum_vcycles.set(10)
-solver.fas_options.relative_tolerance.set(1e-3)
-solver.fas_options.absolute_tolerance.set(10.0)
+# Examples of different writing utilities - First writes to vti/pvd
+vti_writer = VTIWriter('forward/vti/', base='greenland', dx=mg[0].dx,
+        static_fields={'bed':mg[0].geometry.bed,
+                       'beta':mg[0].sliding.beta,},
+        dynamic_fields={'H':mg[0].state.H,
+                        'U':[mg[0].state.u, mg[0].state.v],
+                        'mask':mg[0].state.mask,}
+        )
 
-#model.set_top_level(0)
-
-logger = TimeLogger(mg.levels[model.top_level],
-        pvd_directory='forward',pvd_base='greenland')
-model.register_post_step_hook(logger)
-
+# Second writes to zarr archive, which can be converted to netcdf via xarray
+zarr_writer = ZarrWriter('forward/example_run.zarr',
+        static_fields={'bed':mg[0].geometry.bed,
+                       'beta':mg[0].sliding.beta,},
+        dynamic_fields={'H':mg[0].state.H,
+                        'u':mg[0].state.u,
+                        'v':mg[0].state.v,
+                        'mask':mg[0].state.mask,}
+        )
+           
+zarr_writer.initialize(mg[0],overwrite=True)
+vti_writer.initialize(mg[0])
 t = cp.float32(0.0)
 t_end = cp.float32(1000.0)
 dt = cp.float32(25.0)
 while t < t_end:
-    print(f"Solving forward problem at t={t}")
+    print(f"Solving forward problem at t={t} with dt={dt:.2f}")
     model.forward(t,dt)
     t += dt
 
+    vti_writer.append(mg[0],time=t)
+    vti_writer.write_pvd()
+    zarr_writer.append(mg[0],time=t)
+
+zarr_writer.consolidate_metadata()

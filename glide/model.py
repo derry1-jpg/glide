@@ -13,7 +13,7 @@ class IceDynamics:
     def __init__(self,mg=None,
             n_levels=None,grid=None,
             ny=None,nx=None,dx=None,
-            x0=None,y0=None,crs=None):
+            x0=cp.float32(0.0),y0=cp.float32(0.0),crs=None):
         if mg is not None:
             self.mg = mg
         elif grid is not None and n_levels is not None:

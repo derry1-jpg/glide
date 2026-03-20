@@ -25,13 +25,13 @@ def _maybe_scalar(a: Any) -> bool:
     return arr.ndim == 0
 
 def _coord(name, values):
-    if name == "x":
+    if name[0] == "x":
         return (name, values, {
             "standard_name": "projection_x_coordinate",
             "units": "m",
             "axis": "X",
         })
-    elif name == "y":
+    elif name[0] == "y":
         return (name, values, {
             "standard_name": "projection_y_coordinate",
             "units": "m",
@@ -83,6 +83,35 @@ class Field:
         string = f'Field: {self.name}, {self.units}, ({self.data.shape[0]}, {self.data.shape[1]})'
         return string
 
+    def to_cell(
+        self):
+        if self.grid_entity is GridEntity.CELL:
+            return self
+        elif self.grid_entity is GridEntity.VERTICAL_FACET:
+            cell_data = 0.5*(self.data[:,1:] + self.data[:,:-1])
+            return Field(data=cell_data,
+                grid_entity=GridEntity.CELL,
+                dx=self.dx,
+                grid=self.grid,
+                units=self.units,
+                attrs=self.attrs)
+        elif self.grid_entity is GridEntity.HORIZONTAL_FACET:
+            cell_data = 0.5*(self.data[1:] + self.data[:-1])
+            return Field(data=cell_data,
+                grid_entity=GridEntity.CELL,
+                dx=self.dx,
+                grid=self.grid,
+                units=self.units,
+                attrs=self.attrs)
+        else:
+            return
+
+                
+
+
+
+
+
     def to_dataarray(
         self,
         grid: Grid | None = None,
@@ -131,43 +160,45 @@ class Field:
             attrs["spatial_ref"] = g.crs.to_wkt()
             attrs["crs_wkt"] = g.crs.to_wkt()
 
-        dims = ("y", "x")
         # Rich coordinate mode: use grid-provided coordinates
         
         if self.grid_entity is GridEntity.CELL:
+            dims = ("y_cell", "x_cell")
             if g is not None:   
                 coords = {
-                    "x": _coord("x",_to_numpy(g.x_cell)),
-                    "y": _coord("y",_to_numpy(g.y_cell)),
+                    "x_cell": _coord("x_cell",_to_numpy(g.x_cell)),
+                    "y_cell": _coord("y_cell",_to_numpy(g.y_cell)),
                 }
             else:
                 coords = {
-                    "x": _coord("x",np.arange( self.dx/2, self.dx/2 + data.shape[1]*self.dx, self.dx)),
-                    "y": _coord("y",np.arange(-self.dx/2,-self.dx/2 - data.shape[0]*self.dx,-self.dx)),
+                    "x_cell": _coord("x_cell",np.arange( self.dx/2, self.dx/2 + data.shape[1]*self.dx, self.dx)),
+                    "y_cell": _coord("y_cell",np.arange(-self.dx/2,-self.dx/2 - data.shape[0]*self.dx,-self.dx)),
                 }
 
         elif self.grid_entity is GridEntity.VERTICAL_FACET:
+            dims = ("y_cell", "x_facet")
             if g is not None:
                 coords = {
-                    "x": _coord("x",_to_numpy(g.x_vfacet)),
-                    "y": _coord("y",_to_numpy(g.y_cell)),
+                    "x_facet": _coord("x_facet",_to_numpy(g.x_vfacet)),
+                    "y_cell": _coord("y_cell",_to_numpy(g.y_cell)),
                 }
             else:
                 coords = {
-                    "x": _coord("x",np.arange(0, data.shape[1]*self.dx,self.dx)),
-                    "y": _coord("y",np.arange(-self.dx/2,-self.dx/2 - data.shape[0]*self.dx,-self.dx)),
+                    "x_facet": _coord("x_facet",np.arange(0, data.shape[1]*self.dx,self.dx)),
+                    "y_cell": _coord("y_cell",np.arange(-self.dx/2,-self.dx/2 - data.shape[0]*self.dx,-self.dx)),
                 }
 
         elif self.grid_entity is GridEntity.HORIZONTAL_FACET:
+            dims = ("y_facet", "x_cell")
             if g is not None:
                 coords = {
-                    "x": _coord("x",_to_numpy(g.x_cell)),
-                    "y": _coord("y",_to_numpy(g.y_hfacet)),
+                    "x_cell": _coord("x_cell",_to_numpy(g.x_cell)),
+                    "y_facet": _coord("y_facet",_to_numpy(g.y_hfacet)),
                 }
             else:
                 coords = {
-                    "x": _coord("x",np.arange( self.dx/2, self.dx/2 + data.shape[1]*self.dx, self.dx)),
-                    "y": _coord("y",np.arange(0, -self.data.shape[0]*self.dx,-self.dx)),
+                    "x_cell": _coord("x_cell",np.arange( self.dx/2, self.dx/2 + data.shape[1]*self.dx, self.dx)),
+                    "y_facet": _coord("y_facet",np.arange(0, -self.data.shape[0]*self.dx,-self.dx)),
                 }
 
         return xr.DataArray(
@@ -205,6 +236,16 @@ class Constant:
     def __repr__(self):
         string = f'Constant: {self.name}, {self.value:.3f}, {self.units}'
         return string
+
+    def to_dataarray(self):
+        return xr.DataArray(
+            data=self.value,
+            name=self.name,
+            attrs={
+                "units": self.units,
+                "long_name": self.attrs['long_name'] if 'long_name' in self.attrs else None,
+            },
+        )
 
 @dataclass
 class SubgridField(Field):

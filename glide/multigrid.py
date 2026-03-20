@@ -8,7 +8,7 @@ from .field import LocalOption,BroadcastOption
 class Multigrid:
     def __init__(self,n_levels: int,finest_grid=None,
             ny=None,nx=None,dx=None,
-            x0=None,y0=None,crs=None,
+            x0=cp.float32(0.0),y0=cp.float32(0.0),crs=None,
             use_fast_math=True):
 
         cuda_dir = Path(__file__).parent / "cuda"

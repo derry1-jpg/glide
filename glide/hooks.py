@@ -64,7 +64,8 @@ class InverseLogger:
             + self.grid.state.v.data[:-1])
         self.writer.write_step(i, i, {
             'u': [u_c*(1-self.grid.state.mask.data),v_c*(1-self.grid.state.mask.data)],
-            'beta': self.grid.sliding.beta.data}
+            'beta': self.grid.sliding.beta.data,
+            'bed': self.grid.geometry.bed.data}
         )
         self.writer.write_pvd()
 

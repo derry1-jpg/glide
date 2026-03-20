@@ -9,21 +9,18 @@ import cupy as cp
 from .grid import Grid
 from .multigrid import Multigrid, FASCDSolver,FASAdjointSolver
 
-
-# Physical constants
-RHO_ICE = 917.0  # kg/m^3
-G = 9.81  # m/s^2
-
 class IceDynamics:
     def __init__(self,mg=None,
             n_levels=None,grid=None,
-            ny=None,nx=None,dx=None):
+            ny=None,nx=None,dx=None,
+            x0=None,y0=None,crs=None):
         if mg is not None:
             self.mg = mg
         elif grid is not None and n_levels is not None:
             self.mg = Multigrid(n_levels,finest_grid=grid)
         elif ny and nx and dx and n_levels:
-            self.mg = Multigrid(n_levels,ny=ny,nx=nx,dx=dx)
+            self.mg = Multigrid(n_levels,ny=ny,nx=nx,dx=dx,
+                   x0=x0,y0=y0,crs=crs)
         else:
             raise ValueError('Must supply either (a) a multigrid object \
                               (b) a grid and number of levels \
@@ -62,7 +59,9 @@ class IceDynamics:
         for f in self._post_forward_hooks:
             f(t+dt)
 
-    def backward(self,t,dt,dJdu=None,dJdv=None,dJdH=None):
+    def backward(self,t,dt,dJdu=None,dJdv=None,dJdH=None,
+            compute_beta_grad=True,compute_bed_grad=True,
+            compute_H_prev_grad=True,compute_smb_grad=True):
         if dJdu is not None:
             self.mg.levels[self.top_level].adjoint_operators.f_u[:,:] = -dJdu
         else:
@@ -78,6 +77,9 @@ class IceDynamics:
 
         self.adjoint_solver.solve(dt,start_level=self.top_level)
         self.mg.levels[self.top_level].adjoint_operators.compute_gradient_beta()
+        self.mg.levels[self.top_level].adjoint_operators.compute_gradient_bed()
+        self.mg.levels[self.top_level].adjoint_operators.compute_gradient_H_prev(dt)
+        self.mg.levels[self.top_level].adjoint_operators.compute_gradient_smb()
         
 
 

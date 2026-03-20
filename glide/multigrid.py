@@ -6,7 +6,10 @@ from .operators import VankaConfig,NewtonConfig
 from .field import LocalOption,BroadcastOption
 
 class Multigrid:
-    def __init__(self,n_levels: int,finest_grid=None,ny=None,nx=None,dx=None,use_fast_math=True):
+    def __init__(self,n_levels: int,finest_grid=None,
+            ny=None,nx=None,dx=None,
+            x0=None,y0=None,crs=None,
+            use_fast_math=True):
 
         cuda_dir = Path(__file__).parent / "cuda"
 
@@ -26,7 +29,7 @@ class Multigrid:
             self.finest_grid = finest_grid
         else:
             print("Instantiating multigrid from new grid")
-            self.finest_grid = Grid(ny,nx,dx)
+            self.finest_grid = Grid(ny,nx,dx,x0=x0,y0=y0,crs=crs)
 
         self.n_levels = n_levels
 
@@ -59,7 +62,11 @@ class Multigrid:
     def create_coarse_grid(self,parent_grid,restrict_fields=True):
         child_grid = Grid(
             parent_grid.ny // 2, parent_grid.nx // 2,
-            parent_grid.dx * 2, parent=parent_grid
+            parent_grid.dx * 2, 
+            x0=parent_grid.x0 + parent_grid.dx/2,
+            y0=parent_grid.y0 - parent_grid.dx/2,
+            crs=parent_grid.crs,
+            parent=parent_grid
         )
         parent_grid.child = child_grid
         if restrict_fields == True:
@@ -250,6 +257,9 @@ class Multigrid:
         kernel((grid_size,), (block_size,),
                (coarse_field, fine_field, ny_fine, nx_fine))
         return fine_field   
+
+    def __getitem__(self,key):
+        return self.levels[key]
 
 class HierarchyFieldManager:
     def __init__(self, levels, getter, restrict,name=None):
@@ -911,8 +921,15 @@ class FASAdjointSolver:
         level.grid.adjoint_operators.vanka_sweep(dt,
             self._fas_config.pre_steps)
 
+        # Restrict forward solution to child - ensures adjoint sees the restriction of the correct forward state
+        mg.restrict_vfacet(level.grid.state.u.data,next_level.grid.state.u.data)
+        mg.restrict_hfacet(level.grid.state.v.data,next_level.grid.state.v.data)
+        mg.restrict_cell(level.grid.state.H.data,next_level.grid.state.H.data)
+        mg.restrict_cell(level.grid.state.H_prev.data,next_level.grid.state.H_prev.data)
+        mg.restrict_cell(level.grid.state.phi.data,next_level.grid.state.phi.data)
+        mg.restrict_cell(level.grid.state.mask.data,next_level.grid.state.mask.data,method='max')
+
         # Restrict adjoint solution to child
-        #mg.restrict_adjoint_state(level.grid,next_level.grid)
         mg.restrict_vfacet(level.grid.adjoint.lambda_u.data,next_level.grid.adjoint.lambda_u.data)
         mg.restrict_hfacet(level.grid.adjoint.lambda_v.data,next_level.grid.adjoint.lambda_v.data)
         mg.restrict_cell(level.grid.adjoint.lambda_H.data,next_level.grid.adjoint.lambda_H.data)
@@ -954,7 +971,6 @@ class FASAdjointSolver:
 
         if not coarse:
             level.grid.adjoint_operators.vanka_sweep(dt, self._fas_config.finest_steps)
-
 
 class FASAdjointScratch:
     def __init__(self,grid):

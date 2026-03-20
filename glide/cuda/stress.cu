@@ -405,6 +405,7 @@ struct TauDxStencilDual {
 struct TauDxJacobian {
     float res;
     float d_H_l, d_H_r;
+    float d_bed_l, d_bed_r;
 
     __device__ __forceinline__
     float apply_jvp(const TauDxStencil& dot) const {
@@ -447,6 +448,8 @@ TauDxJacobian get_tau_dx_jac(
 
     jac.d_H_l = 0.5f*(S_r - S_l)*dx_inv - H_avg*(1.0f + dbase_dH_l)*dx_inv;
     jac.d_H_r = 0.5f*(S_r - S_l)*dx_inv + H_avg*(1.0f + dbase_dH_r)*dx_inv;
+    jac.d_bed_l = -H_avg*grounded_l*dx_inv;
+    jac.d_bed_r =  H_avg*grounded_r*dx_inv;
     return jac;
 }
 
@@ -488,6 +491,7 @@ struct TauDyStencilDual {
 struct TauDyJacobian {
     float res;
     float d_H_t, d_H_b;
+    float d_bed_t, d_bed_b;
 
     __device__ __forceinline__
     float apply_jvp(const TauDyStencil& dot) const {
@@ -527,6 +531,8 @@ TauDyJacobian get_tau_dy_jac(
 
     jac.d_H_t = 0.5f*(S_t - S_b)*dx_inv + H_avg*(1.0f + dbase_dH_t)*dx_inv;
     jac.d_H_b = 0.5f*(S_t - S_b)*dx_inv - H_avg*(1.0f + dbase_dH_b)*dx_inv;
+    jac.d_bed_t =  H_avg*grounded_t*dx_inv;
+    jac.d_bed_b = -H_avg*grounded_b*dx_inv;
     return jac;
 
 }

@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field, fields
 import cupy as cp
 from cupy.typing import NDArray
-from .field import Field, SubgridField, Constant
+from .field import Field, SubgridField, Constant, GridEntity
 from .operators import ForwardOperators, AdjointOperators
 
 @dataclass
@@ -163,7 +163,8 @@ class Grid:
     desirable behavior.
     """
 
-    def __init__(self, ny: int, nx: int, dx: cp.float32, 
+    def __init__(self, ny: int, nx: int, dx: cp.float32,
+            x0: cp.float32=0.0, y0: cp.float32=0.0, crs=None, 
             parent = None,
             state: State = None,
             adjoint: AdjointState = None,
@@ -171,7 +172,7 @@ class Grid:
             rheology: Rheology = None,
             sliding: Sliding = None,
             calving: Calving = None,
-            forcing: Forcing = None
+            forcing: Forcing = None,
             ):
 
         self.parent = parent
@@ -181,6 +182,16 @@ class Grid:
         self.nx = nx
         
         self.dx = cp.float32(dx)
+
+        self.x0 = x0
+        self.y0 = y0
+        self.crs = crs
+
+        self.x_cell = cp.arange(x0,x0 + dx*nx, dx)
+        self.y_cell = cp.arange(y0,y0 - dx*ny,-dx)
+
+        self.x_vfacet = cp.arange(x0 - dx/2, x0 - dx/2 + dx*(nx+1), dx) 
+        self.y_hfacet = cp.arange(y0 + dx/2, y0 + dx/2 - dx*(ny+1),-dx) 
 
         # Degrees of freedom
         self.nu = ny * (nx + 1)
@@ -222,36 +233,54 @@ class Grid:
     def _allocate_state(self):
         u = Field(
             data=cp.zeros((self.ny, self.nx+1),dtype=cp.float32),
+            grid_entity=GridEntity.VERTICAL_FACET,
+            dx=self.dx,
+            grid=self,
             name='u',
             units='m a^{-1}',
             attrs={'long_name':'x component of depth-averaged velocity'})
         
         v = Field(
             data=cp.zeros((self.ny+1, self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.HORIZONTAL_FACET,
+            dx=self.dx,
+            grid=self,
             name='v',
             units='m a^{-1}',
             attrs={'long_name':'y component of depth-averaged velocity'})
 
         H = Field(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='H',
             units='m',
             attrs={'long_name':'Ice thickness at t + dt (end of time step)'})
         
         H_prev = Field(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='H_prev',
             units='m',
             attrs={'long_name':'Ice thickness at t (beginning of time step)'})
 
         phi = Field(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='phi',
             units='m',
             attrs={'long_name':'Potential Head'})
 
         mask = Field(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='mask',
             units='',
             attrs={'long_name':'''Active set mask - if unity, thickness is 
@@ -262,17 +291,27 @@ class Grid:
     def _allocate_adjoint_state(self):
         lambda_u = Field(
             data=cp.zeros((self.ny, self.nx+1),dtype=cp.float32),
+            grid_entity=GridEntity.VERTICAL_FACET,
+            dx=self.dx,
+            grid=self,
             name='lambda_u',
             units='varies with objective fn',
             attrs={'long_name':'Adjoint variable for u'})
 
         lambda_v = Field(
             data=cp.zeros((self.ny+1, self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.HORIZONTAL_FACET,
+            dx=self.dx,
+            grid=self,
             name='lambda_v',
             units='varies with objective fn',
             attrs={'long_name':'Adjoint variable for v'})
 
-        lambda_H = Field(cp.zeros((self.ny,self.nx),dtype=cp.float32),
+        lambda_H = Field(
+            cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='lambda_H',
             units='varies with objective fn',
             attrs={'long_name':'Adjoint variable for H'})
@@ -282,6 +321,9 @@ class Grid:
     def _allocate_geometry(self):
         bed = SubgridField(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='bed',
             units='m',
             attrs={'long_name':'bed elevation (not necessarily the ice base)'})
@@ -290,6 +332,9 @@ class Grid:
     def _allocate_rheology(self):
         B = Field(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='B',
             units='m',
             attrs={'long_name':'Rheologic prefactor.  B=A^{-1/n}'})
@@ -299,6 +344,9 @@ class Grid:
     def _allocate_sliding(self):
         beta = Field(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='beta',
             units='?',
             attrs={'long_name':'Basal sliding coefficient'})
@@ -311,6 +359,9 @@ class Grid:
     def _allocate_forcing(self):
         smb = Field(
             data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
             name='smb',
             units='m a^{-1}',
             attrs={'long_name':'Surface mass balance'})

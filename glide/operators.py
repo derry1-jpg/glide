@@ -520,7 +520,7 @@ class AdjointOperators:
             self.grid.adjoint.lambda_v.data[:] -= self.vanka_config.omega * self.delta_lambda_v
             self.grid.adjoint.lambda_H.data[:] -= self.vanka_config.omega * self.delta_lambda_H
 
-    def compute_gradient_beta(self, freeze_calving=False):
+    def compute_gradient_beta(self):
         kernel = self.kernels.get_function('compute_gradient_beta')
         grid_size, block_size, stride, halo = self._kernel_config
 
@@ -532,11 +532,6 @@ class AdjointOperators:
         sliding = grid.sliding
         calving = grid.calving
         forcing = grid.forcing
-
-        if freeze_calving:
-            calving_rate = cp.float32(0.0)
-        else:
-            calving_rate = calving.calving_rate.value
 
         sliding.beta.grad.fill(0)
         kernel(grid_size, block_size,
@@ -552,10 +547,49 @@ class AdjointOperators:
                 geometry.flotation_reg_driving.value,
                 sliding.m.value, sliding.u_reg.value, 
                 sliding.water_drag.value, sliding.flotation_reg_sliding.value,
-                calving_rate, calving.flotation_reg_calving.value,
+                calving.calving_rate.value, calving.flotation_reg_calving.value,
                 grid.dx, cp.float32(0.0),
                 grid.ny, grid.nx, stride, halo)) 
 
+    def compute_gradient_bed(self):
+        kernel = self.kernels.get_function('compute_gradient_bed')
+        grid_size, block_size, stride, halo = self._kernel_config
+
+        grid = self.grid
+        state = grid.state
+        adjoint = grid.adjoint
+        geometry = grid.geometry        
+        rheology = grid.rheology
+        sliding = grid.sliding
+        calving = grid.calving
+        forcing = grid.forcing
+
+        geometry.bed.grad.fill(0)
+        kernel(grid_size, block_size,
+               (geometry.bed.grad,
+                state.u.data, state.v.data, state.H.data, 
+                adjoint.lambda_u.data, adjoint.lambda_v.data, adjoint.lambda_H.data, 
+                state.phi.data, state.mask.data,
+                geometry.bed.data, 
+                rheology.B.data, 
+                sliding.beta.data,
+                self.gamma,
+                rheology.n.value, rheology.eps_reg.value, 
+                geometry.flotation_reg_driving.value,
+                sliding.m.value, sliding.u_reg.value, 
+                sliding.water_drag.value, sliding.flotation_reg_sliding.value,
+                calving.calving_rate.value, calving.flotation_reg_calving.value,
+                grid.dx, cp.float32(0.0),
+                grid.ny, grid.nx, stride, halo)) 
+
+
+    def compute_gradient_H_prev(self, dt):
+        self.grid.state.H_prev.grad[:,:] = -self.grid.adjoint.lambda_H.data[:,:]/dt
+
+    def compute_gradient_smb(self):
+        self.grid.forcing.smb.grad[:,:] = -self.grid.adjoint.lambda_H.data[:,:] 
   
+    
+
 
 

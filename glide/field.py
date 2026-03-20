@@ -1,22 +1,59 @@
+from __future__ import annotations
 from dataclasses import dataclass, field, fields
-from typing import Any
+from typing import Any, TYPE_CHECKING
+from enum import Enum
 import cupy as cp
+import numpy as np
+import xarray as xr
+
+if TYPE_CHECKING:
+    from .grid import Grid
+
+class GridEntity(str, Enum):
+    CELL = "cell"
+    VERTICAL_FACET = "vertical_facet"
+    HORIZONTAL_FACET = "horizontal_facet"
+
+def _to_numpy(a: Any) -> np.ndarray:
+    """Convert NumPy/CuPy-like input to a NumPy array for xarray."""
+    if cp is not None and isinstance(a, cp.ndarray):
+        return cp.asnumpy(a)
+    return np.asarray(a)
+
+def _maybe_scalar(a: Any) -> bool:
+    arr = _to_numpy(a)
+    return arr.ndim == 0
+
+def _coord(name, values):
+    if name == "x":
+        return (name, values, {
+            "standard_name": "projection_x_coordinate",
+            "units": "m",
+            "axis": "X",
+        })
+    elif name == "y":
+        return (name, values, {
+            "standard_name": "projection_y_coordinate",
+            "units": "m",
+            "axis": "Y",
+        })
 
 @dataclass
 class Field:
     data: Any
+    grid_entity: GridEntity
+    dx: cp.float32
+    grid: Grid | None = field(default=None, repr=False, compare=False)
     name: str | None = None
     units: str | None = None
     attrs: dict = field(default_factory=dict)
     _grad: Any | None = None
-    initialized: bool = False
 
     def set(self, value) -> None:
         if hasattr(value, "shape"):
             self.data[...] = cp.array(value,dtype=cp.float32)
         else:
             self.data.fill(value)
-        self.initialized = True
 
     def zero(self) -> None:
         self.data.fill(0)
@@ -38,13 +75,108 @@ class Field:
         return cp.zeros_like(self.data)
 
     def __repr__(self):
-        string = f'Field: {self.name}\n{self.data}\n{self.data.shape}, {self.data.dtype}, {self.units}\nInitialized: {self.initialized}'
+        string = f'Field: {self.name}\n{self.data}\n{self.data.shape}, {self.data.dtype}, {self.units}'
         return string
 
     @property
     def compact_string(self):
         string = f'Field: {self.name}, {self.units}, ({self.data.shape[0]}, {self.data.shape[1]})'
         return string
+
+    def to_dataarray(
+        self,
+        grid: Grid | None = None,
+        *,
+        name: str | None = None,
+        copy: bool = False,
+    ) -> xr.DataArray:
+        """
+        Convert this field to an xarray.DataArray.
+
+        Priority for spatial metadata:
+            1. explicit `grid` argument
+            2. `self.grid`
+            3. fallback to index coordinates
+
+        Parameters
+        ----------
+        grid
+            Optional grid override. If omitted, uses `self.grid` if available.
+        name
+            Optional name override for the DataArray.
+        copy
+            If True, copy the NumPy data before constructing the DataArray.
+
+        Returns
+        -------
+        xarray.DataArray
+        """
+        g = grid if grid is not None else self.grid
+        data = _to_numpy(self.data)
+        if copy:
+            data = data.copy()
+
+        da_name = name if name is not None else self.name
+
+        attrs: dict[str, Any] = dict(self.attrs)
+        if self.units is not None:
+            attrs["units"] = self.units
+        if "long_name" in self.attrs:
+            attrs["long_name"] = self.attrs["long_name"]
+        attrs["grid_entity"] = self.grid_entity.value
+
+        # Optional CRS metadata from the grid
+        if g is not None and getattr(g, "crs", None) is not None:
+            attrs["crs"] = str(g.crs)
+            attrs["spatial_ref"] = g.crs.to_wkt()
+            attrs["crs_wkt"] = g.crs.to_wkt()
+
+        dims = ("y", "x")
+        # Rich coordinate mode: use grid-provided coordinates
+        
+        if self.grid_entity is GridEntity.CELL:
+            if g is not None:   
+                coords = {
+                    "x": _coord("x",_to_numpy(g.x_cell)),
+                    "y": _coord("y",_to_numpy(g.y_cell)),
+                }
+            else:
+                coords = {
+                    "x": _coord("x",np.arange( self.dx/2, self.dx/2 + data.shape[1]*self.dx, self.dx)),
+                    "y": _coord("y",np.arange(-self.dx/2,-self.dx/2 - data.shape[0]*self.dx,-self.dx)),
+                }
+
+        elif self.grid_entity is GridEntity.VERTICAL_FACET:
+            if g is not None:
+                coords = {
+                    "x": _coord("x",_to_numpy(g.x_vfacet)),
+                    "y": _coord("y",_to_numpy(g.y_cell)),
+                }
+            else:
+                coords = {
+                    "x": _coord("x",np.arange(0, data.shape[1]*self.dx,self.dx)),
+                    "y": _coord("y",np.arange(-self.dx/2,-self.dx/2 - data.shape[0]*self.dx,-self.dx)),
+                }
+
+        elif self.grid_entity is GridEntity.HORIZONTAL_FACET:
+            if g is not None:
+                coords = {
+                    "x": _coord("x",_to_numpy(g.x_cell)),
+                    "y": _coord("y",_to_numpy(g.y_hfacet)),
+                }
+            else:
+                coords = {
+                    "x": _coord("x",np.arange( self.dx/2, self.dx/2 + data.shape[1]*self.dx, self.dx)),
+                    "y": _coord("y",np.arange(0, -self.data.shape[0]*self.dx,-self.dx)),
+                }
+
+        return xr.DataArray(
+            data=data,
+            dims=dims,
+            coords=coords,
+            name=da_name,
+            attrs=attrs,
+            )
 
 @dataclass
 class Constant:

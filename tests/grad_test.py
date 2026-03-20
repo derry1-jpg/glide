@@ -94,24 +94,7 @@ adjoint_solver.solve(dt)
 grid.adjoint_operators.compute_gradient_beta()
 
 beta_pert = cp.random.randn(*grid.sliding.beta.data.shape,dtype=cp.float32)
-"""
-n_comp = 5
-kmin, kmax = 1, 3  # integer modes in [1,3]
 
-for _ in range(n_comp):
-    kx = cp.random.randint(kmin, kmax + 1)
-    ky = cp.random.randint(kmin, kmax + 1)
-    phix = 2*cp.pi*cp.random.rand()
-    phiy = 2*cp.pi*cp.random.rand()
-
-    v += cp.sin(2*cp.pi*kx*X/L + phix) * cp.sin(2*cp.pi*ky*Y/L + phiy)
-
-v /= cp.sqrt(cp.float32(n_comp))
-v -= v.mean()
-v /= cp.sqrt((v*v).mean() + 1e-30).astype(cp.float32)
-#v = cp.zeros(grad_beta.shape,dtype=cp.float32)
-#v[24,18] = 1.0
-"""
 eps = cp.float32(1e-3)
 beta_0 = cp.array(grid.sliding.beta.data)
 grid.sliding.beta.data[:,:] = beta_0 + eps*beta_pert

@@ -1,36 +1,18 @@
 """
-Greenland forward simulation example.
+Mountain glacier forward simulation example, in
+which we build a glacier system over the Bitterroot
+Mountains in western Montana
 
 Run interactively or execute as a script. Modify the paths and parameters
 below to match your setup.
 """
-
-import pickle
 import cupy as cp
 import numpy as np
+import pyproj
 
-from glide import IcePhysics
-from glide.io import VTIWriter, write_vti
-from glide.data import (
-    load_bitterroot_dem
-)
-
-# =============================================================================
-# Configuration - modify these paths and parameters
-# =============================================================================
-
-OUTPUT_DIR = "./output"
-
-SKIP = 6           # Geometry downsampling factor
-DT = 25.0          # Time step (years)
-N_STEPS = 100      # Number of time steps
-N_LEVELS = 6       # Multigrid levels
-N_VCYCLES = 3      # V-cycles per time step
-
-# Physical constants
-RHO_ICE = 917.0
-G = 9.81
-N_GLEN = 3.0
+from glide.model import IceDynamics
+from glide.data import load_bitterroot_dem
+from glide.io import VTIWriter
 
 # =============================================================================
 # Load data
@@ -38,11 +20,14 @@ N_GLEN = 3.0
 
 print("Loading geometry...")
 data = load_bitterroot_dem()
-bed = data.values.squeeze()[100:-100,100:-100]
-x = data.x.values[100:-100]
-y = data.y.values[100:-100]
+crs = pyproj.CRS(data.spatial_ref.crs_wkt)
 
-factor = 2**N_LEVELS
+bed = data.values.squeeze()[:-1,:-1]
+x = data.x.values[:-1]
+y = data.y.values[:-1]
+
+n_levels = 5
+factor = 2**n_levels
 nx_target = (len(x) // factor) * factor
 ny_target = (len(y) // factor) * factor
 
@@ -62,62 +47,66 @@ thk = srf - bed
 ny,nx = srf.shape
 dx = x[1]-x[0]
 
-print(f"Grid: {ny} x {nx}, dx = {dx:.1f} m")
+### Initialize grid
+# ny and nx must both divide by 2^(n_levels - 1) cleanly!
+model = IceDynamics(n_levels=5,ny=ny,nx=nx,dx=dx,
+        x0=x[0],y0=y[0],
+        crs=crs)
+mg = model.mg
 
-print("Loading SMB...")
+### Initialize state
+mg.state.H.set(thk)
+mg.state.H_prev.set(thk)
+
+### Initialize geometry
+mg.geometry.bed.set(bed)
+
+### Initialize rheology
+# Compute B (rate factor - we measure driving stress in units of head, so the rho g factor gets subsumed into definitions of beta and B!)
+B = cp.zeros((ny,nx), dtype=cp.float32)
+B.fill(1e-16 ** (-1.0 / 3.0) / (917 * 9.81)) 
+mg.rheology.B.set(B)
+mg.rheology.eps_reg.set(1e-6)
+mg.rheology.n.set(3.0)
+
+beta = cp.zeros((ny,nx), dtype=cp.float32)
+beta.fill(1.5)
+
+mg.sliding.beta.set(beta)
+mg.sliding.m.set(1./3.)
+
+### Initialize forcing
 ela = 1800
 smb = 0.5/1000.0*(srf - ela)
+mg.forcing.smb.set(smb)
 
-print("Loading beta...")
-beta = cp.ones_like(thk)*2.5#cp.array(pickle.load(open(BETA_PATH, 'rb')))
+### Set multigrid solver parameters ###
+model.forward_solver.fas_options.set(
+        coarsest_steps=200, pre_steps=10, 
+        post_steps=20, finest_steps=50,
+        relative_tolerance=1e-2, absolute_tolerance=10.0,
+        report_norms=True)
 
-# Compute B (rate factor - we measure driving stress in units of head, so the rho g factor gets subsumed into definitions of beta and B!)
-B_scalar = cp.float32(1e-16 ** (-1.0 / N_GLEN) / (RHO_ICE * G))
-B = B_scalar * cp.ones((ny, nx), dtype=cp.float32)
 
-# =============================================================================
-# Initialize physics
-# =============================================================================
+# Examples of different writing utilities - First writes to vti/pvd
+vti_writer = VTIWriter('forward/vti/', base='greenland', dx=mg[0].dx,
+        static_fields={'bed':mg[0].geometry.bed,
+                       'beta':mg[0].sliding.beta,},
+        dynamic_fields={'H':mg[0].state.H,
+                        'U':[mg[0].state.u, mg[0].state.v],
+                        'mask':mg[0].state.mask,}
+        )
+vti_writer.initialize(mg[0])
 
-print("Initializing physics...")
-physics = IcePhysics(ny, nx, dx, n_levels=N_LEVELS, thklim=0.1,water_drag=1e-6, m=1./3.)
-physics.set_geometry(bed, thk)
-physics.set_parameters(B=B, beta=beta, smb=smb)
+# Run simulation
+t = cp.float32(0.0)
+t_end = cp.float32(1000.0)
+dt = cp.float32(25.0)
+while t < t_end:
+    print(f"Solving forward problem at t={t} with dt={dt:.2f}")
+    model.forward(t,dt)
+    t += dt
 
-# Access the grid hierarchy
-grid = physics.grid
-
-# =============================================================================
-# Set up output
-# =============================================================================
-
-writer = VTIWriter(OUTPUT_DIR, base="bitterroot", dx=dx)
-write_vti(f"{OUTPUT_DIR}/bed.vti", {'bed': grid.bed}, dx)
-
-# =============================================================================
-# Time stepping
-# =============================================================================
-
-print(f"Running {N_STEPS} time steps of {DT} years...")
-t = 0.0
-
-for step in range(N_STEPS):
-    print(f"Step {step}: t = {t:.1f} yr, H_mean = {float(grid.H.mean()):.1f} m")
-
-    # Forward solve
-    u, v, H = physics.forward(dt=DT, n_vcycles=N_VCYCLES, verbose=True)
-    t += DT
-
-    # Output
-    u_c, v_c = physics.get_velocities_cell_centered()
-    surface = physics.get_surface()
-
-    writer.write_step(step, t, {
-        'thk': H,
-        'srf': surface,
-        'vel': [u_c, v_c]
-    })
-    writer.write_pvd()
-
-print("Done!")
-
+    # Write
+    vti_writer.append(mg[0],time=t)
+    vti_writer.write_pvd()

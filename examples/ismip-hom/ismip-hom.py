@@ -1,95 +1,66 @@
-"""
-Greenland forward simulation example.
-
-Run interactively or execute as a script. Modify the paths and parameters
-below to match your setup.
-"""
-
 import cupy as cp
 import numpy as np
 import matplotlib.pyplot as plt
 
-from glide import IcePhysics
-from glide.io import VTIWriter, write_vti
+from glide.grid import Grid
+from glide.model import IceDynamics
 
-# =============================================================================
-# Configuration - modify these paths and parameters
-# =============================================================================
 
-N_LEVELS = 6       # Multigrid levels
-N_VCYCLES = 10
-L = 5000
-EXP = 'C'
+fig,axs = plt.subplots(nrows=2,ncols=3)
 
-# Physical constants
-RHO_ICE = 917.0
-G = 9.81
-N_GLEN = 3.0
+for ax,L in zip(axs.ravel(),[5000,10000,20000,40000,80000,160000]):
 
-# =============================================================================
-# Configure Domain
-# =============================================================================
+    dt = cp.float32(0.1)
 
-base_res = 256
+    base_res = 128
+    y_factr = 5
+    x_factr = 5
 
-y_factr = 7
-x_factr = 7
+    ny = base_res*y_factr
+    nx = base_res*x_factr
 
-ny = base_res*y_factr
-nx = base_res*x_factr
+    x = cp.linspace(0,x_factr*L,nx,dtype=cp.float32)
+    y = cp.linspace(0,y_factr*L,ny,dtype=cp.float32)
 
-y_slice = int((y_factr//2  +  1./4) * base_res)
-x_slice = slice(x_factr//2*base_res,(x_factr//2 + 1)*base_res,1)
+    y_slice = int((y_factr//2  +  1./4) * base_res)
+    x_slice = slice(x_factr//2*base_res,(x_factr//2 + 1)*base_res,1)
 
-x = cp.linspace(0,x_factr*L,nx,dtype=cp.float32)
-y = cp.linspace(0,y_factr*L,ny,dtype=cp.float32)
-dx = (x[1] - x[0]).item()
+    dx = (x[1] - x[0]).item()
 
-X,Y = cp.meshgrid(x,y)
+    X,Y = cp.meshgrid(x,y)
 
-srf = 1000.0 * cp.ones((ny,nx),dtype=cp.float32) - cp.tan(cp.deg2rad(0.1))*X + 1000
-bed = srf - 1000 
-thk = srf - bed
+    srf = 1000.0 * cp.ones((ny,nx),dtype=cp.float32) - cp.tan(cp.deg2rad(0.1))*X + 10000
+    bed = srf - 1000 
+    thk = srf - bed
 
-if EXP == 'C':
-    beta = (1000*cp.sin(2*cp.pi*X/L)*cp.sin(2*cp.pi*Y/L) + 1000)/(RHO_ICE*G)
-elif EXP == 'D':
-    beta = (1000*cp.sin(2*cp.pi*X/L) + 1000)/(RHO_ICE*G)
-else:
-    raise NotImplementedError('Only support ISMIP-HOM C and D for now')
+    rho_i = cp.float32(917.0)
+    g = cp.float32(9.81)
+    beta = (1000*cp.sin(2*cp.pi*X/L)*cp.sin(2*cp.pi*Y/L) + 1000)/(rho_i * g)
 
-smb = cp.zeros_like(thk)
+    B = cp.ones((ny,nx),dtype=cp.float32)
+    B.fill((1e-16 ** -(1./3))/(rho_i * g))
 
-# Compute B (rate factor - we measure driving stress in units of head, so the rho g factor gets subsumed into definitions of beta and B!)
-B_scalar = cp.float32(1e-16 ** (-1.0 / N_GLEN) / (RHO_ICE * G))
-B = B_scalar * cp.ones((ny, nx), dtype=cp.float32)
+    model = IceDynamics(n_levels=6,ny=ny,nx=nx,dx=dx)
 
-# =============================================================================
-# Initialize physics
-# =============================================================================
+    model.mg.geometry.bed.set(bed)
+    model.mg.rheology.B.set(B)
+    model.mg.sliding.beta.set(beta)
+    model.mg.sliding.m.set(1.0)
+    model.mg.sliding.u_reg.set(1.0)
+    model.mg.state.H.set(thk)
+    model.mg.state.H_prev.set(thk)
 
-print("Initializing physics...")
-physics = IcePhysics(ny, nx, dx, n_levels=N_LEVELS,eps_reg=cp.float32(1e-6))
-physics.set_geometry(bed, thk)
-physics.set_parameters(B=B, beta=beta, smb=smb)
+    ### Set multigrid solver parameters ###
+    model.forward_solver.fas_options.set(
+            coarsest_steps=300, pre_steps=10, 
+            post_steps=20, finest_steps=0,
+            relative_tolerance=5e-3, absolute_tolerance=1.0,
+            report_norms=True)
 
-# Access the grid hierarchy
-grid = physics.grid
+    model.forward(0.0,dt)
 
-writer = VTIWriter('./results/', base=f"ismip-hom-{EXP}-{L}", dx=dx)
-
-# Forward solve
-u, v, H = physics.forward(dt=0.1, n_vcycles=N_VCYCLES, verbose=True)
-
-# Output
-u_c, v_c = physics.get_velocities_cell_centered()
-surface = physics.get_surface()
-
-writer.write_step(0, 0, {
-    'thk': H,
-    'srf': surface,
-    'vel': [u_c, v_c]
-})
-writer.write_pvd()
-plt.plot(x[x_slice].get() - x[x_slice][0].get(),grid.u[y_slice,x_slice].get())
+    ax.plot(np.linspace(0,1,base_res),model.mg[0].state.u.data.get()[y_slice,x_slice],label=f'L={L}km')
+    ax.legend()
+    ax.set_xlim(0,1)
+plt.show()
 

@@ -33,7 +33,9 @@ mg.state.H_prev.set(thk)
 ### Initialize geometry
 bed = gaussian_filter(dataset.bed.values,1)
 mg.geometry.bed.set(bed)
-mg.geometry.flotation_reg_driving.set(0.1)
+mg.geometry.depth.set(np.maximum(-bed,0))
+mg.geometry.sigmoid_c.set(0.1)
+mg.geometry.sigmoid_k.set(3.0)
 
 ### Initialize rheology
 # Compute B (rate factor - we measure driving stress in units of head, so the rho g factor gets subsumed into definitions of beta and B!)
@@ -64,7 +66,7 @@ mg.calving.calving_rate.set(2000.0)
 
 ### Initialize forcing
 smb = dataset.smb.values
-#smb += -1.0
+smb += -1.0
 mg.forcing.smb.set(smb)
 
 ### Set multigrid solver parameters ###
@@ -73,6 +75,9 @@ model.forward_solver.fas_options.set(
         post_steps=150, finest_steps=0,
         relative_tolerance=1e-2, absolute_tolerance=10.0,
         report_norms=True)
+
+#model.forward_solver.vanka_options.relax_phi.set(cp.float32(0.5))
+#model.forward_solver.vanka_options.newton_options.ssa_damping.set(cp.float32(0.1))
 
 
 # Examples of different writing utilities - First writes to vti/pvd

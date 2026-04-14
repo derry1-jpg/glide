@@ -12,9 +12,10 @@ from scipy.ndimage import gaussian_filter
 
 from glide.model import IceDynamics
 from glide.data import load_antarctica_preprocessed
+
 from glide.io import ZarrWriter, VTIWriter
 
-### Load a dataset (here a preprocessed greenland dataset)
+### Load a dataset (here a preprocessed antarctica dataset)
 dataset = load_antarctica_preprocessed()
 
 ### Initialize grid
@@ -26,14 +27,17 @@ model = IceDynamics(n_levels=6,ny=ny,nx=nx,dx=dx,
 mg = model.mg
 
 ### Initialize state
-thk = gaussian_filter(dataset.thickness.values,1)
+thk = dataset.thickness
 mg.state.H.set(thk)
 mg.state.H_prev.set(thk)
 
 ### Initialize geometry
-bed = gaussian_filter(dataset.bed.values,1)
+bed = dataset.bed
+depth = np.maximum(-dataset.bed,0.0)
 mg.geometry.bed.set(bed)
-mg.geometry.flotation_reg_driving.set(0.1)
+mg.geometry.depth.set(depth)
+mg.geometry.sigmoid_c.set(0.1)
+mg.geometry.sigmoid_k.set(3.0)
 
 ### Initialize rheology
 # Compute B (rate factor - we measure driving stress in units of head, 
@@ -79,8 +83,8 @@ mg.forcing.smb.set(smb)
 ### Set multigrid solver parameters ###
 model.forward_solver.fas_options.set(
         coarsest_steps=200, pre_steps=10, 
-        post_steps=50, finest_steps=100,
-        relative_tolerance=1e-2, absolute_tolerance=10.0,
+        post_steps=150, finest_steps=0,
+        relative_tolerance=2e-2, absolute_tolerance=10.0,
         report_norms=True)
 
 # Antarctica likes it if we damp the transition between floating and grounded
@@ -111,8 +115,8 @@ zarr_writer.initialize(mg[0],overwrite=True)
 
 # Run simulation
 t = cp.float32(0.0)
-t_end = cp.float32(1000.0)
-dt = cp.float32(25.0)
+t_end = cp.float32(250.0)
+dt = cp.float32(20.0)
 while t < t_end:
     print(f"Solving forward problem at t={t} with dt={dt:.2f}")
     model.forward(t,dt)

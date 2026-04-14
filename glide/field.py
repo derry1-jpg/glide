@@ -106,12 +106,6 @@ class Field:
         else:
             return
 
-                
-
-
-
-
-
     def to_dataarray(
         self,
         grid: Grid | None = None,
@@ -226,6 +220,10 @@ class Constant:
             self._grad = 0.0
         return self._grad
 
+    @grad.setter
+    def grad(self,value):
+        self._grad = cp.float32(value)
+
     def has_grad(self) -> bool:
         return self._grad is not None
 
@@ -250,6 +248,23 @@ class Constant:
 @dataclass
 class SubgridField(Field):
     quantiles: Any | None = None
+
+
+@dataclass
+class TimeField(Field):
+    dt: cp.float32 | None = None
+    def to_cell(
+        self):
+        raise AttributeError('Only supported for GridEntity.CELL')
+
+    def to_dataarray(
+        self,
+        grid: Grid | None = None,
+        *,
+        name: str | None = None,
+        copy: bool = False,
+    ) -> xr.DataArray:
+        raise NotImplementedError
 
 class LocalOption:
     def __init__(self, getter, setter, name: str):

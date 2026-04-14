@@ -75,11 +75,13 @@ class IceDynamics:
         else:    
             self.mg.levels[self.top_level].adjoint_operators.f_H.fill(0.0)
 
-        self.adjoint_solver.solve(dt,start_level=self.top_level)
+        converged = self.adjoint_solver.solve(dt,start_level=self.top_level)
         self.mg.levels[self.top_level].adjoint_operators.compute_gradient_beta()
         self.mg.levels[self.top_level].adjoint_operators.compute_gradient_bed()
         self.mg.levels[self.top_level].adjoint_operators.compute_gradient_H_prev(dt)
         self.mg.levels[self.top_level].adjoint_operators.compute_gradient_smb()
+
+        return converged
         
 
 

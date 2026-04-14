@@ -75,22 +75,24 @@ __device__ __forceinline__ float sigmoid_deriv(const float z, const float c) {
 }
 
 
-__device__ __forceinline__ float get_grounded(const float H, const float B, const float sigmoid_c) 
-{
-   float z = B + 0.917f*H;
-   return sigmoid(z, sigmoid_c);
-}
-
-__device__ __forceinline__ float get_phi(const float H, const float bed) 
-{
-   return bed + 0.917f*H;
-}
-
-//__device__ __forceinline__ float get_phi_grad(const float H, const float bed, const float sigmoid_c) 
+//__device__ __forceinline__ float get_grounded(const float H, const float bed, const float sigmoid_c) 
 //{
-//   float phi = fmaxf(bed + 0.917f*H,0.0f);
-//   return phi > 0.0f ? 0.917f : 0.0f;
+//   float z = bed + 0.917f*H;
+//   return sigmoid(z, sigmoid_c);
 //}
+
+//__device__ __forceinline__ float get_grounded(const float H, const float bed, const float sigmoid_c) 
+//{
+//   float depth = fmaxf(-bed,0.0f);
+//   float z = 0.917f*H - depth;
+//   return fmaxf( fminf(1.0f + sigmoid_c*z,0.99f),0.01f);
+//}
+
+__device__ __forceinline__ float get_grounded(const float H, const float depth, const float sigmoid_c, const float sigmoid_k) 
+{
+   float z = 0.917f*H - depth + sigmoid_k/sigmoid_c;
+   return sigmoid(z,sigmoid_c);
+}
 
 __device__ __forceinline__ float get_vfacet(const float* __restrict__ u, int i, int j, int ny, int nx) {
     //if (i < 0 || i >= ny || j < 0 || j > nx) return 0.0f;

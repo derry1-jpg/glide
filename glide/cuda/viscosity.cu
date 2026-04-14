@@ -17,8 +17,9 @@ extern "C" __global__
 void compute_grounded(
     float* __restrict__ grounded,
     const float* __restrict__ H,
-    const float* __restrict__ bed,
+    const float* __restrict__ depth,
     float sigmoid_c,
+    float sigmoid_k,
     float relaxation_parameter,
     int ny, int nx,
     int stride, int halo
@@ -30,11 +31,11 @@ void compute_grounded(
     if (i < 0 || i >= ny || j<0 || j >= nx) return;
 
     float H_c = get_cell(H,i,j,ny,nx);
-    float bed_c = get_cell(bed,i,j,ny,nx);
+    float depth_c = get_cell(depth,i,j,ny,nx);
     float grounded_old = grounded[i * nx + j];
-    grounded[i * nx + j] = (1.0f - relaxation_parameter) * get_grounded(H_c,bed_c,sigmoid_c) + relaxation_parameter * grounded_old;
+    grounded[i * nx + j] = (1.0f - relaxation_parameter) * get_grounded(H_c,depth_c,sigmoid_c, sigmoid_k) + relaxation_parameter * grounded_old;
 }
-
+/*
 extern "C" __global__
 void compute_phi(
     float* __restrict__ phi,
@@ -55,7 +56,7 @@ void compute_phi(
     float phi_old = phi[i * nx + j];
     phi[i * nx + j] = (1.0f - relaxation_parameter) * get_phi(H_c,bed_c) + relaxation_parameter * phi_old;
 }
-
+*/
 /*==================================================
   ================ VISCOSITY =======================
   ==================================================*/

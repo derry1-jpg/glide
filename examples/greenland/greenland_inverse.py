@@ -40,7 +40,9 @@ mg.state.H_prev.set(thk)
 ### Initialize geometry
 bed = gaussian_filter(dataset.bed.values,1)
 mg.geometry.bed.set(bed)
-mg.geometry.flotation_reg_driving.set(0.1)
+mg.geometry.depth.set(np.maximum(-bed,0))
+mg.geometry.sigmoid_c.set(0.1)
+mg.geometry.sigmoid_k.set(3.0)
 
 ### Initialize rheology
 B = cp.zeros((ny,nx), dtype=cp.float32)

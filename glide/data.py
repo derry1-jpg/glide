@@ -24,6 +24,7 @@ except ImportError:
 FILE_IDS = {
     "GLIDE_greenland_inputs.h5": "1Iu3Xro_0b8TVht7OHe2KFOrJOX4YC-nj",
     "GLIDE_antarctica_inputs.h5": "12pc5Yhmldwp6fD0-CRdXVCbrmDvg9afo",
+    "GLIDE_antarctica_inputs_v2.nc": "14PkHqeRvu-dXzM0xozMedJDhAs5_pdiY",
     "bitterroot_dem.tif": "18tsQDV6D4ri7hvhYsad1Ft_c2gYb1ziE",
 }
 
@@ -121,7 +122,7 @@ def load_greenland_preprocessed(filename="GLIDE_greenland_inputs.h5", cache_dir=
     return xr.open_dataset(fetch(filename, cache_dir=cache_dir, quiet=quiet), engine='h5netcdf')
 
 
-def load_antarctica_preprocessed(filename="GLIDE_antarctica_inputs.h5", cache_dir=None, quiet=False):
+def load_antarctica_preprocessed(filename="GLIDE_antarctica_inputs_v2.nc", cache_dir=None, quiet=False):
     """
     Load preprocessed Antarctica datasets (auto-downloads if needed).
 
@@ -139,7 +140,7 @@ def load_antarctica_preprocessed(filename="GLIDE_antarctica_inputs.h5", cache_di
     xarray.Dataset
     """
     import xarray as xr
-    return xr.open_dataset(fetch(filename, cache_dir=cache_dir, quiet=quiet), engine='h5netcdf')
+    return xr.open_dataset(fetch(filename, cache_dir=cache_dir, quiet=quiet))
 
 
 def load_bitterroot_dem(filename="bitterroot_dem.tif", cache_dir=None, quiet=False):
@@ -244,20 +245,22 @@ def load_bedmachine(path, skip=1, thklim=0.1, bbox_pad=[0,1,0,1]):
     import xarray as xr
 
     ds = xr.open_dataset(path)
+    from scipy.ndimage import gaussian_filter
 
     # Apply bounding box padding and skip
     x = ds['x'].values[bbox_pad[0]:-bbox_pad[1]][::skip]
     y = ds['y'].values[bbox_pad[2]:-bbox_pad[3]][::skip]
-    bed = ds['bed'].values[bbox_pad[2]:-bbox_pad[3], bbox_pad[0]:-bbox_pad[1]][::skip, ::skip]
-    thickness = ds['thickness'].values[bbox_pad[2]:-bbox_pad[3], bbox_pad[0]:-bbox_pad[1]][::skip, ::skip]
-    surface = ds['surface'].values[bbox_pad[2]:-bbox_pad[3], bbox_pad[0]:-bbox_pad[1]][::skip, ::skip]
+    bed = gaussian_filter(ds['bed'].values[bbox_pad[2]:-bbox_pad[3], bbox_pad[0]:-bbox_pad[1]],skip)[::skip, ::skip]
+    thickness = gaussian_filter(ds['thickness'].values[bbox_pad[2]:-bbox_pad[3], bbox_pad[0]:-bbox_pad[1]],skip)[::skip, ::skip]
+    surface = gaussian_filter(ds['surface'].values[bbox_pad[2]:-bbox_pad[3], bbox_pad[0]:-bbox_pad[1]],skip)[::skip, ::skip]
 
     ds.close()
 
-    base = np.maximum(bed, surface * (1 - (1 / (1 - 0.917))))
-    thickness = surface - base + thklim
+    #base = np.maximum(bed, surface * (1 - (1 / (1 - 0.917))))
+    #thickness = surface - base + thklim
 
     dx = float(abs(x[1] - x[0]))
+
 
     return {
         'x': np.array(x),

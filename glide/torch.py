@@ -49,12 +49,19 @@ class GlideStep(torch.autograd.Function):
         model.mg.state.phi.set(cp.asarray(phi_torch.data),start_level=level)
         model.mg.state.mask.set(cp.asarray(mask_torch.data),start_level=level)
 
-        model.backward(t,dt,dJdu=cp.asarray(gu),dJdv=cp.asarray(gv),dJdH=cp.asarray(gH))
+        converged = model.backward(t,dt,dJdu=cp.asarray(gu),dJdv=cp.asarray(gv),dJdH=cp.asarray(gH))
+
 
         g_H_prev = torch.tensor(model.mg[level].state.H_prev.grad)
         g_bed = torch.tensor(model.mg[level].geometry.bed.grad)
         g_beta = torch.tensor(model.mg[level].sliding.beta.grad)
         g_smb = torch.tensor(model.mg[level].forcing.smb.grad)
+        
+        if not converged:
+            g_H_prev[:,:] = 0.0
+            g_bed[:,:] = 0.0
+            g_beta[:,:] = 0.0
+            g_smb[:,:] = 0.0
 
         return None, None, None, None, g_H_prev, g_bed, g_beta, g_smb
 

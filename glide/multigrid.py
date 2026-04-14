@@ -88,8 +88,10 @@ class Multigrid:
 
     def restrict_geometry(self,fine_grid,coarse_grid):
         self.restrict_cell(fine_grid.geometry.bed.data,coarse_grid.geometry.bed.data)
+        self.restrict_cell(fine_grid.geometry.depth.data,coarse_grid.geometry.depth.data)
         coarse_grid.geometry.thklim.set(fine_grid.geometry.thklim.value)
-        coarse_grid.geometry.flotation_reg_driving.set(fine_grid.geometry.flotation_reg_driving.value)
+        coarse_grid.geometry.sigmoid_c.set(fine_grid.geometry.sigmoid_c.value)
+        coarse_grid.geometry.sigmoid_k.set(fine_grid.geometry.sigmoid_k.value)
 
     def restrict_rheology(self,fine_grid,coarse_grid):
         self.restrict_cell(fine_grid.rheology.B.data,coarse_grid.rheology.B.data)
@@ -367,11 +369,25 @@ class MGGeometryManager:
             name="bed",
         )
 
-        self.flotation_reg_driving = HierarchyFieldManager(
+        self.depth = HierarchyFieldManager(
             mg.levels,
-            getter=lambda g: g.geometry.flotation_reg_driving,
+            getter=lambda g: g.geometry.depth,
+            restrict=lambda f,c: mg.restrict_cell(f.data,c.data,method='avg'),
+            name="depth",
+        )
+
+        self.sigmoid_c = HierarchyFieldManager(
+            mg.levels,
+            getter=lambda g: g.geometry.sigmoid_c,
             restrict=lambda f,c: c.set(f.value),
-            name="flotation_reg_driving",
+            name="sigmoid_c",
+        )
+        
+        self.sigmoid_k = HierarchyFieldManager(
+            mg.levels,
+            getter=lambda g: g.geometry.sigmoid_k,
+            restrict=lambda f,c: c.set(f.value),
+            name="sigmoid_k",
         )
 
         self.thklim = HierarchyFieldManager(
@@ -852,8 +868,6 @@ class NewtonOptions:
         return 'newton_options={' + ', '.join([f"{getattr(self,o)}" for o in self.options]) + '}'
 
 
-
-
 class FASAdjointSolver:
     def __init__(self,multigrid):
         self.multigrid = multigrid
@@ -870,10 +884,15 @@ class FASAdjointSolver:
         self.n_levels = len(self.levels)
         self.dt = None
 
-    def solve(self,dt,start_level=0,report_norms=True):
+    def solve(self,dt,start_level=0,report_norms=True,zero_init=True):
         self.dt = cp.float32(dt)
         
         start_level_ = self.multigrid.levels[start_level]
+
+        if zero_init:
+            start_level_.adjoint.lambda_u.data.fill(0.0)
+            start_level_.adjoint.lambda_v.data.fill(0.0)
+            start_level_.adjoint.lambda_H.data.fill(0.0)
         
         ru_init,rv_init,rH_init = start_level_.adjoint_operators.compute_residual(dt,return_norms=True)
         initial_residual_norm = cp.sqrt(ru_init**2 + rv_init**2 + rH_init**2)
@@ -887,6 +906,7 @@ class FASAdjointSolver:
 
         absolute_residual_norm = initial_residual_norm
         iteration = 0
+        
         while (relative_residual_norm > self._fas_config.relative_tolerance 
                 and absolute_residual_norm > self._fas_config.absolute_tolerance
                 and iteration < self._fas_config.maximum_vcycles):
@@ -901,6 +921,11 @@ class FASAdjointSolver:
                       f"|r_v| = {float(rv):.2e}, "
                       f"|r_H| = {float(rH):.2e}")
             iteration += 1
+        if iteration < self._fas_config.maximum_vcycles:
+            converged = True
+        else:
+            converged = False
+        return converged
 
     def vcycle(self, l, finest=False):
 

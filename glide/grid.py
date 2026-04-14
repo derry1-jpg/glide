@@ -29,6 +29,7 @@ class AdjointState:
 @dataclass
 class Geometry:
     bed: SubgridField | None = None
+    depth: Field | None = None
     thklim: Constant = field(
         default_factory=lambda: Constant(
             value=cp.float32(0.1),
@@ -36,16 +37,28 @@ class Geometry:
             units='m',
             attrs={'long_name':'minimum thickness'})
         )
-    flotation_reg_driving: Constant = field(
+    sigmoid_c: Constant = field(
         default_factory=lambda: Constant(
             value=cp.float32(0.1),
-            name='flotation_reg_driving',
+            name='sigmoid_c',
             units='m^{-1}',
             attrs={'long_name':("smoothing factor for sigmoidal \
                                   grounding flag used in driving stress. \
                                   Lower values imply a smoother transition \
                                   from grounded to floating physics")})
         )
+    sigmoid_k: Constant = field(
+        default_factory=lambda: Constant(
+            value=cp.float32(3.0),
+            name='sigmoid_k',
+            units='m^{-1}',
+            attrs={'long_name':("offset factor for sigmoidal \
+                                  grounding flag used in driving stress. \
+                                  larger values imply a more asymmetric \
+                                  transition from grounded to floating \
+                                  physics")})
+        )
+
 
     def __repr__(self):
         return f'{self.bed.compact_string}\n{self.thklim}\n{self.flotation_reg_driving}'
@@ -330,7 +343,16 @@ class Grid:
             name='bed',
             units='m',
             attrs={'long_name':'bed elevation (not necessarily the ice base)'})
-        return Geometry(bed=bed)
+
+        depth = SubgridField(
+            data=cp.zeros((self.ny,self.nx),dtype=cp.float32),
+            grid_entity=GridEntity.CELL,
+            dx=self.dx,
+            grid=self,
+            name='depth',
+            units='m',
+            attrs={'long_name':'water depth'})
+        return Geometry(bed=bed,depth=depth)
 
     def _allocate_rheology(self):
         B = Field(

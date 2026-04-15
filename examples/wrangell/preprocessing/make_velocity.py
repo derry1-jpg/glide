@@ -50,8 +50,8 @@ vx = (X0_plus - X0_minus)/(2*EPS)
 vy = (Y0_plus - Y0_minus)/(2*EPS)
 
 # Create gridded velocity xarray
-ds_dem['vx'] = (('y','x'),vx)
-ds_dem['vy'] = (('y','x'),vy)
+ds_dem['vx'] = (('y','x'),vx.astype('float32'))
+ds_dem['vy'] = (('y','x'),vy.astype('float32'))
 
 del ds_dem['elevation']
 del ds_dem['domain_mask']

@@ -46,6 +46,8 @@ if ds.rio.crs is None:
 
 # Reproject to project CRS
 ds = ds.rio.reproject(crs,resolution=90)
+ds['x'] = ds['x'].astype('float32')
+ds['y'] = ds['y'].astype('float32')
 
 # Get the elevation part of projected DEM
 da = ds["elevation"]  
@@ -63,13 +65,14 @@ poly = shapely.Polygon(outline[:,:2])
 
 # Convert to a mask
 mask = da_trimmed.rio.clip([poly],crs="EPSG:4326",invert=False,drop=False).notnull()
-ds_trimmed['domain_mask'] = mask
+mask.attrs['_FillValue'] = False
+ds_trimmed['domain_mask'] = mask.astype('bool')
 
 # Load RGI glaciers and convert to a raster mask
 geodf = geopandas.read_file(GLACIER_MASK_PATH)
 glacier_mask = ds_trimmed.elevation.rio.clip(geodf.geometry.values,geodf.crs,drop=False).notnull()
-ds_trimmed['rgi_mask'] = glacier_mask
-
+glacier_mask.attrs['_FillValue'] = False
+ds_trimmed['rgi_mask'] = glacier_mask.astype('bool')
 
 # Write combined DEM and masks to nc
 ds_trimmed.to_netcdf(OUTPUT_PATH)

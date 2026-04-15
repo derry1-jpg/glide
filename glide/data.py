@@ -26,8 +26,10 @@ FILE_IDS = {
     "GLIDE_antarctica_inputs.h5": "12pc5Yhmldwp6fD0-CRdXVCbrmDvg9afo",
     "GLIDE_antarctica_inputs_v2.nc": "14PkHqeRvu-dXzM0xozMedJDhAs5_pdiY",
     "bitterroot_dem.tif": "18tsQDV6D4ri7hvhYsad1Ft_c2gYb1ziE",
+    "GLIDE_wrangell_inputs.nc": "1DW4icyCpWu3zhfuzLCeGEkUmiRuvWgZz",
+    "GLIDE_wrangell_flightlines.gpkg": "1YXgvjvJgVeBJOHhKqgBkxgu9VJObkQBl",
+    "GLIDE_temperature_anomaly_1000k.nc": "1FvSfatcPRlhVFyUoW4-HBxyMT06q2ecT"
 }
-
 
 def _gdrive_url(file_id):
     """Convert Google Drive file ID to direct download URL."""
@@ -141,6 +143,34 @@ def load_antarctica_preprocessed(filename="GLIDE_antarctica_inputs_v2.nc", cache
     """
     import xarray as xr
     return xr.open_dataset(fetch(filename, cache_dir=cache_dir, quiet=quiet))
+
+
+def load_wrangell_preprocessed(cache_dir=None, quiet=False):
+    """
+    Load preprocessed Greenland datasets (auto-downloads if needed).
+
+    Parameters
+    ----------
+    filename : str
+        Name of file in registry
+    cache_dir : str or Path, optional
+        Directory to cache files (default: ./data)
+    quiet : bool
+        Suppress download progress output
+
+    Returns
+    -------
+    xarray.Dataset
+    """
+    import xarray as xr
+    import geopandas as gpd
+    GRIDDED_FILENAME = "GLIDE_wrangell_inputs.nc"
+    FLIGHTLINE_FILENAME = "GLIDE_wrangell_flightlines.gpkg"
+    ANOMALY_FILENAME = "GLIDE_temperature_anomaly_1000k.nc"
+    gridded_data = xr.open_dataset(fetch(GRIDDED_FILENAME, cache_dir=cache_dir, quiet=quiet))
+    temperature_anomaly = xr.open_dataset(fetch(ANOMALY_FILENAME, cache_dir=cache_dir, quiet=quiet))
+    flightlines = gpd.read_file(fetch(FLIGHTLINE_FILENAME, cache_dir=cache_dir, quiet=quiet))
+    return gridded_data, temperature_anomaly, flightlines
 
 
 def load_bitterroot_dem(filename="bitterroot_dem.tif", cache_dir=None, quiet=False):

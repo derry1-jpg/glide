@@ -46,7 +46,7 @@ solar_potential_mean_da = xr.DataArray(
     solar_potential_mean.get(),
     dims=["t","y", "x"],
     coords={
-        "t": np.arange(0, 12)/12,
+        "t": np.arange(0, 12, dtype=np.float32)/12,
         "y": dem.y,
         "x": dem.x,
     },
@@ -60,7 +60,7 @@ solar_potential_cos_da = xr.DataArray(
     solar_potential_cos.get(),
     dims=["t","y", "x"],
     coords={
-        "t": np.arange(0, 12)/12,
+        "t": np.arange(0, 12, dtype=np.float32)/12,
         "y": dem.y,
         "x": dem.x,
     },
@@ -73,7 +73,7 @@ solar_potential_sin_da = xr.DataArray(
     solar_potential_sin.get(),
     dims=["t","y", "x"],
     coords={
-        "t": np.arange(0, 12)/12,
+        "t": np.arange(0, 12, dtype=np.float32)/12,
         "y": dem.y,
         "x": dem.x,
     },

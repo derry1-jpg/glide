@@ -24,14 +24,14 @@ dem = xr.load_dataset(GEOM_PATH)
 panc = PanCarraBase(PRECIP_PATH, T2M_PATH, OROG_PATH) 
 
 # Regrid temperature and precipitation fields
-_, t2m_fields, precip_fields = panc.regrid_carra2_fields(dem, crs, method='cubic',t2m_lapse_rate=0.003)
+_, t2m_fields, precip_fields = panc.regrid_carra2_fields(dem, crs, method='linear',t2m_lapse_rate=0.003)
 
 # Create t2m data array
 t2m_da = xr.DataArray(
         t2m_fields,
         dims=['t','y','x'],
         coords={
-            't':np.arange(0,12)/12.,
+            't':np.arange(0,12,dtype=np.float32)/12.,
             'y': dem.y,
             'x': dem.x,
         },
@@ -44,7 +44,7 @@ t2m_da = xr.DataArray(
 # Create precip data array
 precip_da = xr.DataArray(precip_fields/917*365,
         dims = ['t','y','x'],
-        coords = {"t":np.arange(0,12)/12,
+        coords = {"t":np.arange(0,12,dtype=np.float32)/12,
                   "y": dem.y,
                   "x": dem.x},
         attrs = {"units": "m ice equivalent / yr",

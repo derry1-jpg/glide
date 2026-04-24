@@ -85,7 +85,7 @@ model.forward_solver.fas_options.set(
         coarsest_steps=200, pre_steps=10, 
         post_steps=150, finest_steps=0,
         relative_tolerance=1e-2, absolute_tolerance=10.0,
-        report_norms=True)
+        report_norms=False)
 
 model.forward_solver.vanka_options.newton_options.ssa_damping.set(cp.float32(0.001))
 
@@ -94,7 +94,7 @@ model.adjoint_solver.fas_options.set(
         coarsest_steps=200, pre_steps=10,
         post_steps=150, finest_steps=0,
         relative_tolerance=1e-2, absolute_tolerance=1e-5, # Note that adjoint var
-        report_norms=True)                               # adjoint var is small 
+        report_norms=False)                               # adjoint var is small 
                                                           # in magnitude
 
 # Thin Pytorch wrapper of a single glide time step

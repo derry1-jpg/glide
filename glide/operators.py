@@ -2,12 +2,10 @@ import cupy as cp
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
-from .closure import eval_grounded_fraction_kernel
 
 class ForwardOperators:
     def __init__(self,grid,
-            use_fast_math=True,
-            use_subgrid_bed_closure=False):
+            use_fast_math=True):
 
         self.grid = grid
 
@@ -53,7 +51,6 @@ class ForwardOperators:
         self.gamma.fill(grid.geometry.thklim.value)
 
         self.vanka_config = VankaConfig()
-        self.use_subgrid_bed_closure = use_subgrid_bed_closure
 
 
 
@@ -168,19 +165,11 @@ class ForwardOperators:
                 grid.ny, grid.nx, stride, halo)) 
 
     def compute_phi(self, relaxation=cp.float32(0.0)):
-        if self.use_subgrid_bed_closure:
-            self.grid.state.phi.data[:,:] = eval_grounded_fraction_kernel(
-                self.grid.state.H.data,
-                self.grid.geometry.bed.quantiles,
-                cp.float32(0.0)
-                )
-
-        else:
-            kernel = self.kernels.get_function('compute_grounded')
-            grid_size, block_size, stride, halo = self._kernel_config
+        kernel = self.kernels.get_function('compute_grounded')
+        grid_size, block_size, stride, halo = self._kernel_config
             
-            grid = self.grid
-            kernel(grid_size, block_size,
+        grid = self.grid
+        kernel(grid_size, block_size,
                    (grid.state.phi.data,
                     grid.state.H.data, grid.geometry.depth.data, 
                     grid.geometry.sigmoid_c.value,

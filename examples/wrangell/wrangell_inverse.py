@@ -286,7 +286,7 @@ for level in range(MAX_LEVEL,MIN_LEVEL-1,-1):
 
             smb_ = differentiable_restriction(smb,level)
 
-            u,v,H = glide_step(t,dt,model,level,H_prev_,bed_,beta_,smb_)
+            u,v,H,_ = glide_step(t,dt,model,level,H_prev_,bed_,beta_,smb_)
 
             t += dt
             H_prev_ = H

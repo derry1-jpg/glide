@@ -136,7 +136,7 @@ for level in range(coarsest_level,-1,-1):
         beta = torch.exp(log_beta)
 
         # Predict the velocity and thickness at t + dt
-        u,v,H = glide_step(t,dt,model,level,H_prev,bed,beta,smb)
+        u,v,H,mask = glide_step(t,dt,model,level,H_prev,bed,beta,smb)
 
         # Interpolation from facets (where the model predicts)
         # to cells (where the observations are)

@@ -27,11 +27,12 @@ class GlideStep(torch.autograd.Function):
         phi_torch = torch.tensor(model.mg[level].state.phi.data)
 
         ctx.save_for_backward(u_torch,v_torch,H_torch,mask_torch,phi_torch,H_prev,bed,beta,smb)
+        ctx.mark_non_differentiable(mask_torch)
   
-        return u_torch, v_torch, H_torch
+        return u_torch, v_torch, H_torch, mask_torch
 
     @staticmethod
-    def backward(ctx, gu, gv, gH):
+    def backward(ctx, gu, gv, gH, gM):
         t = ctx.t
         dt = ctx.dt
         model = ctx.model

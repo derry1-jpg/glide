@@ -48,8 +48,8 @@ mg.rheology.eps_reg.set(1e-6)
 mg.rheology.n.set(3.0)
 
 ### Initialize sliding
-BETA_PATH = None
-#BETA_PATH = "./inverse/level_0/beta_opt.nc"
+#BETA_PATH = None
+BETA_PATH ="inverse/level_0/beta_opt.nc"
 if BETA_PATH:
     import xarray as xr
     beta = cp.array(xr.load_dataarray(BETA_PATH))
@@ -80,7 +80,7 @@ from pathlib import Path
 # -------------------------------------------------------
 # Paths (fully explicit to avoid runtime confusion)
 # -------------------------------------------------------
-SMB_DIR = Path("/home/wilson/Downloads/glide/examples/greenland")
+SMB_DIR = Path("/home/wilson/Sandbox/glide/examples/greenland")
 
 def load_smb_year(year, target_grid):
 
@@ -149,13 +149,13 @@ zarr_writer.initialize(mg[0],overwrite=True)
 # Run simulation
 
 start_year = 2015
-t = cp.float32(0.0)
-t_end = cp.float32(286.0)
+t = cp.float32(start_year)
+t_end = cp.float32(2301.0)
 dt = cp.float32(1.0)
 while t < t_end:
     print(f"Solving forward problem at t={t} with dt={dt:.2f}")
 
-    year = start_year + int(t)
+    year = int(t)
     smb_on_glide = load_smb_year(year, target_grid)
 
     print("Year:", year, "SMB mean:", float(smb_on_glide.mean()))
@@ -168,12 +168,13 @@ while t < t_end:
 
 
     model.forward(t,dt)
-    t += dt
+   
 
     # Write
     vti_writer.append(mg[0],time=t)
     vti_writer.write_pvd()
     zarr_writer.append(mg[0],time=t)
+    t+= dt
 
 # Finalize zarr for fast xarray reading
 zarr_writer.consolidate_metadata()

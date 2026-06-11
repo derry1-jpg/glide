@@ -1,0 +1,29 @@
+source:
+  endpoint: ccc9bbd2-4091-4e35-addd-eeb639cf5332
+  base_path: /ISMIP7/GrIS/CESM2-WACCM
+
+
+#Modify with personal endpoint on your computer 
+destination:
+  endpoint: "421d629e-6456-11f1-b6cf-0e9d40238285"
+  dataset_root: ~/data/ISMIP7
+
+layout:
+  remote_path: "{scenario}/{dataset}/v1"
+  local_path: "{dataset}/{scenario}"
+
+#Modify years so that to download the span of files you want.
+# Historical spans 1850-2014, ssp585 spans 2015-2300
+datasets:
+  acabf:
+    filename_pattern: >
+      acabf_GrIS_CESM2-WACCM_{scenario}_dEBM2-1000m_v1_{year}.nc
+
+    scenarios:
+      historical:
+        start: 1850
+        end: 2014
+
+      ssp585:
+        start: 2015
+        end: 2100

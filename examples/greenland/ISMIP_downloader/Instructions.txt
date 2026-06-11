@@ -1,0 +1,35 @@
+
+In order to download ISMIP7 Forcing data for Greenland 
+
+1. Download Globus Connect Personal https://www.globus.org/globus-connect-personal
+(Unless previously installed)
+
+
+2. Run in terminal:
+
+ tar -xzf GlobusConnectPersonal-(version number here).tar.gz
+cd GlobusConnectPersonal-*
+
+./globusconnectpersonal
+
+./globusconnectpersonal -setup
+
+This will open a login URL, authenticate, and then register your machine as an endpoint. 
+Copy your endpoint UUID
+
+
+3. Locate globus connect personal on your computer 
+Start it using its full path ie: /home/wilson/Globus/globusconnectpersonal &
+
+verify that it is connected with:
+
+./globusconnectpersonal -status 
+
+4. Open the config.yaml file copy your UUID into the destination endpoint.
+Select the span of years you would like to download.
+
+
+5. Run the downloader: uv run gr_downloader.py
+
+
+6. Check transfer progress at https://app.globus.org/activity
